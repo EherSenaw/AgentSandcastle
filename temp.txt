@@ -1,0 +1,10 @@
+dog
+goat
+x-ray
+lemon
+goat
+jackal
+umbrella
+yak
+horse
+panda
