@@ -1,7 +1,9 @@
 from transformers import (
+#from smolagents import (
 	HfApiEngine,
 	ReactCodeAgent,
 	tool, Tool, load_tool, stream_to_gradio,
+	#DuckDuckGoSearchTool,
 )
 from transformers.agents import (
 	DuckDuckGoSearchTool
