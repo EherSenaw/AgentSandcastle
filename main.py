@@ -10,9 +10,13 @@ from typing import List, Dict
 # Huggingface related.
 from huggingface_hub import login
 from transformers import (
-#from smolagents import (
 	HfApiEngine,
 	ReactCodeAgent,
+)
+from smolagents import (
+	DuckDuckGoSearchTool,
+	GoogleSearchTool,
+	PythonInterpreterTool,
 )
 
 # TogetherAI related. If get errors, do `pip install together`.
@@ -36,12 +40,14 @@ def single_run(args):
 	""")
 
 def main(args):
-	if args.hf_api_token != '' and args.llm_provider == 'huggingface':
+	if args.hf_api_token != '':
 		login(args.hf_api_token)
+	if args.llm_provider == 'huggingface':
 		llm_engine = HfApiEngine(model=args.llm_model_name)
 	elif args.togetherai_api_token != '' and args.llm_provider == 'togetherai':
 		llm_engine = TogetherAPIEngine(
 			model=args.llm_model_name,
+			tools=[DuckDuckGoSearchTool()],
 			max_iteration=5,
 			verbose=True,
 			free_tier=True,
@@ -59,8 +65,9 @@ def main(args):
 	""")
 	'''
 
-	# TODO: Define agent-controlled multi-turn conversation (no-agent)
-	user_defined_task = "Which one is bigger? 1.02 or 1.2?"
+	# Define agent-controlled multi-turn conversation (no-agent)
+	#user_defined_task = "Which one is bigger? 1.02 or 1.2?"
+	user_defined_task = args.initial_question
 	'''
 	memory = [user_defined_task]
 	while llm_continue_decision(memory):

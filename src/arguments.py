@@ -19,6 +19,11 @@ def build_args():
 		type=str, default='meta-llama/Llama-3-70B-Instruct'
 	)
 
+	parser.add_argument('--initial_question',
+		type=str, default='Which one is bigger? 1.02 or 1.2?',
+		help='Initial question that should be asked to the Agent.'
+	)
+
 	args = parser.parse_args()
 	assert not (args.hf_api_token == '' and args.togetherai_api_token == ''), "One of the LLM provider API token should be given."
 	if args.togetherai_api_token != '':
