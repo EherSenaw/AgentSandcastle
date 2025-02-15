@@ -1,53 +1,133 @@
-import time
-import re
-import os
+import time, re, os
 from typing import List, Optional, Dict
 
-from together import Together
-
-# NOTE: For PoC, just use HuggingFace(smolagent)'s Tool system.
 from src.tools import verify_hf_tools
 from src.prompt_template import (
 	SYSTEM_PROMPT_TEMPLATE,
 	SYSTEM_ANSWER_TEMPLATE,
 )
-from transformers.utils import (
-	get_json_schema
-)
-from smolagents import (
-	tool, Tool
-)
+from transformers.utils import get_json_schema
+from smolagents import tool, Tool
 
-class TogetherAPIEngine():
+from mlx_lm import load, generate
+
+from mlx_vlm import (
+	load as vlm_load,
+	generate as vlm_generate,
+)
+from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
+from mlx_vlm.utils import load_config as vlm_load_config
+
+class MLXEngine():
 	def __init__(
 		self,
-		model : str = 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+		model : str = 'mlx-community/DeepScaleR-1.5B-Preview-4bit',
 		max_iteration : int = 5,
 		verbose : bool = False,
-		free_tier : bool = False,
 		tools : List[Optional[Tool]] = [],
-		modality_io: str = 'text/text',
+		modality_io : str = 'text/text',
+		max_new_tokens : int = 1024,
 	):
-		self.client = Together()
 		self.model = model
 		self.max_iter = max_iteration
 		self.verbose = verbose
 
-		# TODO: Implement tools and map the name and the implementation.
 		self.tools = verify_hf_tools(tools)
 
 		self.memory = []
 		self.cnt_iter = 0
 
-		self.free_tier = free_tier
 		self.modality_in, self.modality_out = modality_io.split('/')
 		self.modality_in = list(self.modality_in.split(','))
 		self.modality_out = list(self.modality_out.split(','))
+
+		self.max_new_tokens = max_new_tokens
+		# Check VLM
+		self.USE_VLM = True if len(self.modality_in) > 1 else False
+		if self.USE_VLM:
+			self.client, self.processor = vlm_load(self.model)
+			self.config = vlm_load_config(self.model)
+
+		else:
+			self.client, self.tokenizer = load(self.model)
 
 		self.validation_prompt = SYSTEM_PROMPT_TEMPLATE
 		self.validation_answer_format = SYSTEM_ANSWER_TEMPLATE
 
 		self.answer_dict_regexp = re.compile(r"\{[^\{\}]*\}")
+
+	def __call__(self, question:str=''):
+		# Check if any TOOLs or HELPs needed.
+		t_req, h_req = self.check_request(question)
+
+		# If tool is needed, use tool.
+		if t_req:
+			self.use_tool(t_req)
+
+		# If helper is needed, use helper.
+		# NOTE: Maybe just use plan_subtask()?
+		if h_req:
+			# Initialize iterations for the given quesiton.
+			self.plan_subtask(question)
+
+		while self.continue_iteration():
+			if self.verbose:
+				print(f"Continue iteration.. ({self.cnt_iter} / {self.max_iter})")
+
+			# Decide action.
+			llm_input_action = "Based on the context, decide the next action for you to solve the problem."
+			action = self.__ask_LLM(llm_input_action)
+
+			# Do action and retrieve observation.
+			llm_input_observation = f"Do: {action}"
+			observation = self.__ask_LLM(llm_input_observation)
+
+			# Store to memory.
+			self.memorize(llm_input_action, action)
+			self.memorize(llm_input_observation, observation)
+
+		# Get final answer.
+		final_answer = self.finalize()
+
+		# Save the memory to the text file by LLM.
+		self.save_mem_to_file(
+			os.path.join(os.getcwd(), 'temp_mlx.log')
+		)
+		# Clean up resources.
+		self.manage_resource()
+
+		return final_answer
+	
+	def __ask_LLM(self, question:str='', image_urls:Optional[List[str]]=None):
+		if image_urls is None:
+			image_urls = []
+		if self.USE_VLM:
+			try:
+				formatted_prompt = vlm_apply_chat_template(
+					self.processor, self.config, self.memory+[{
+						"role": "user",
+						"content": question,
+					}], num_images=len(image_urls) 
+				)
+			except ValueError as e:
+				print(f"\n**ERROR**\nGot ValueError by trying to use Multi-image chat with the model not supported. Fall back to use first image only.\nOriginal error message -> {e}\n**ERROR**\n")
+				image_urls = [image_urls[0]]
+				formatted_prompt = vlm_apply_chat_template(
+					self.processor, self.config, self.memory+[{
+						"role": "user",
+						"content": question,
+					}], num_images=len(image_urls) 
+				)
+			output = vlm_generate(self.client, self.processor, formatted_prompt, image_urls, verbose=self.verbose)
+		else:
+			prompt = self.tokenizer.apply_chat_template(
+				self.memory+[{
+					"role": "user",
+					"content": question,
+				}], add_generation_prompt=True
+			)
+			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
+		return output
 
 	def __retrieve_answer_dict(self, str_answer:str) -> Dict:
 		ans_dict_list = []
@@ -61,6 +141,7 @@ class TogetherAPIEngine():
 		if len(ans_dict_list) < 1:
 			return dict()
 		return ans_dict_list[-1]
+	
 
 	def check_request(self, question=''):
 		#str_tools = "\n".join(list(self.tools.keys()))
@@ -122,97 +203,9 @@ class TogetherAPIEngine():
 		# Record tool results for furthur use.
 		if tool_result:
 			self.memorize('', f'[Observation of Tool {t_req}]\nWith argument: `{t_arg}`\n'+tool_result+'\n[Observation end]\n')
-
-	def __call__(self, question=''):
-		# Check if any TOOLs or HELPs needed.
-		t_req, h_req = self.check_request(question)
-
-		# If tool is needed, use tool.
-		if t_req:
-			self.use_tool(t_req)
-
-		# If helper is needed, use helper.
-		# NOTE: Maybe just use plan_subtask()?
-		if h_req:
-			# Initialize iterations for the given quesiton.
-			self.plan_subtask(question)
-
-		while self.continue_iteration():
-			if self.verbose:
-				print(f"Continue iteration.. ({self.cnt_iter} / {self.max_iter})")
-
-			# Decide action.
-			llm_input_action = "Based on the context, decide the next action for you to solve the problem."
-			action = self.__ask_LLM(llm_input_action)
-
-			# Do action and retrieve observation.
-			llm_input_observation = f"Do: {action}"
-			observation = self.__ask_LLM(llm_input_observation)
-
-			# Store to memory.
-			self.memorize(llm_input_action, action)
-			self.memorize(llm_input_observation, observation)
-
-		# Get final answer.
-		final_answer = self.finalize()
-
-		# TODO: Save the memory to the text file by LLM.
-		self.save_mem_to_file(
-			os.path.join(os.getcwd(), 'tempVL.log')
-		)
-		# Clean up resources.
-		self.manage_resource()
-
-		return final_answer
-
-	# Reuse repetitive pattern
-	# Retrieve URL information from memory and utilize it here.
-	def __ask_LLM(self, question:str='', image_urls:Optional[List[str]]=None):
-		if image_urls is None:
-			image_urls = []
-		if len(image_urls)>0 and 'image' in self.modality_in:
-			response = self.client.chat.completions.create(
-				model = self.model,
-				messages = self.memory + [{
-					"role": "user",
-					"content": [
-						{"type": "text", "text": question},
-						# TODO: Change to local image inference.
-						{"type": "image_url", "image_url": {"url": {image_urls[0]}}}
-					]
-				}] + [{
-					"role": "user",
-					"content": [
-						{"type": "image_url", "image_url": {"url": {i_url}}}
-					]
-				} for i_url in image_urls[1:]]
-			).choices[0].message.content
-		else:
-			response = self.client.chat.completions.create(
-				model = self.model,
-				messages = self.memory + [{
-					"role": "user",
-					"content": question,
-				}]
-			).choices[0].message.content
-		#else:
-		#	raise ValueError(f"Check `__ask_LLM()` template of `TogetherAPIEngine`.")
-
-		if self.verbose:
-			print(f"[User] {question}")
-			print(f"[Assistant] {response}")
-
-		if self.free_tier:
-			time.sleep(1)
-
-		return response
-
+		
 	# Memory
-	def memorize(
-		self,
-		user_query: str,
-		assistant_response: str,
-	):
+	def memorize(self, user_query: str, assistant_response: str):
 		if user_query != '':
 			self.memory.append({
 				"role": "user",
@@ -232,7 +225,6 @@ class TogetherAPIEngine():
 		self.clear_memory()
 		self.cnt_iter = 0
 
-	
 	# Decision
 	def continue_iteration(self):
 		if len(self.memory) == 0:
@@ -268,7 +260,7 @@ class TogetherAPIEngine():
 		final_response = self.__ask_LLM(llm_input)
 		self.memorize(llm_input, final_response)
 		return final_response
-	
+
 	# For saving final memory to the file.
 	# TODO: Convert manual saving process to LLM-controlled saving.
 	def save_mem_to_file(self, file_path: str):
@@ -279,4 +271,3 @@ class TogetherAPIEngine():
 				f"[{m['role']}]\n{m['content']}\n"
 			for m in self.memory])
 		)
-

@@ -5,6 +5,7 @@ from src.tools import (
 	DuckDuckGoSearchToolReturnImages,
 )
 from src.together_engine import TogetherAPIEngine
+from src.mlx_engine import MLXEngine
 
 import pprint
 from typing import List, Dict
@@ -55,6 +56,16 @@ def main(args):
 			free_tier=True,
 			modality_io=args.llm_modality_io,
 		)
+	elif args.llm_provider == 'mlx':
+		# NOTE: Testing local llm engine for Apple Silicon.
+		llm_engine = MLXEngine(
+			model=args.llm_model_name,
+			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
+			max_iteration=5,
+			verbose=True,
+			modality_io=args.llm_modality_io,
+			max_new_tokens=1024,
+		)
 	else:
 		raise ValueError("Provide at least one LLM API provider.")
 
@@ -79,7 +90,7 @@ def main(args):
 		memory += [action, observation]
 	'''
 	final_answer = llm_engine(user_defined_task)
-	print(f"**** FINAL ANSWER ****\n{final_answer}\n**** FINAL ANSWER ****\n")
+	print(f"\n\n**** FINAL ANSWER ****\n{final_answer}\n**** FINAL ANSWER ****\n")
 
 if __name__ == '__main__':
 	args = build_args()

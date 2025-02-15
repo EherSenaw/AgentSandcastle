@@ -14,7 +14,7 @@ def build_args():
 	)
 	parser.add_argument('--llm_provider',
 		type=str, default='huggingface',
-		help='Choose LLM engine API provider to use. {\'huggingface\', \'togetherai\'}. Default: \'huggingface\'. ')
+		help='Choose LLM engine API provider (or Local use with \'mlx\') to use. {\'huggingface\', \'togetherai\', \'mlx\'}. Default: \'huggingface\'. ')
 	parser.add_argument('--llm_model_name',
 		type=str, default='meta-llama/Llama-3-70B-Instruct'
 	)
@@ -29,7 +29,7 @@ def build_args():
 	)
 
 	args = parser.parse_args()
-	assert not (args.hf_api_token == '' and args.togetherai_api_token == ''), "One of the LLM provider API token should be given."
+	assert not (args.hf_api_token == '' and args.togetherai_api_token == '' and args.llm_provider in {'togetherai', 'huggingface'}), "One of the LLM provider API token should be given."
 	if args.togetherai_api_token != '':
 		os.environ['TOGETHER_API_KEY'] = args.togetherai_api_token
 		
