@@ -1,6 +1,8 @@
 from src.arguments import build_args
 from src.tools import (
-	save_file, read_file, list_files
+	save_file, read_file, list_files,
+	open_url_to_PIL_image,
+	DuckDuckGoSearchToolReturnImages,
 )
 from src.together_engine import TogetherAPIEngine
 
@@ -47,10 +49,11 @@ def main(args):
 	elif args.togetherai_api_token != '' and args.llm_provider == 'togetherai':
 		llm_engine = TogetherAPIEngine(
 			model=args.llm_model_name,
-			tools=[DuckDuckGoSearchTool()],
+			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
 			max_iteration=5,
 			verbose=True,
 			free_tier=True,
+			modality_io=args.llm_modality_io,
 		)
 	else:
 		raise ValueError("Provide at least one LLM API provider.")

@@ -18,6 +18,10 @@ def build_args():
 	parser.add_argument('--llm_model_name',
 		type=str, default='meta-llama/Llama-3-70B-Instruct'
 	)
+	parser.add_argument('--llm_modality_io',
+		type=str, default='text/text',
+		help='Provide dedicated I/O modality types for the LLM engine. Provide with following format: `Input1,Input2,.../Output1,Output2,...`. Default: text/text '
+	)
 
 	parser.add_argument('--initial_question',
 		type=str, default='Which one is bigger? 1.02 or 1.2?',

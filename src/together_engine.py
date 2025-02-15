@@ -14,6 +14,36 @@ from smolagents import (
 	tool, Tool
 )
 
+SYSTEM_PROMPT_TEMPLATE = """
+**GENERAL INSTRUCTIONS**
+Your task is to answer questions. If you cannot answer the question, request a helper or use a tool. Fill with Nil where no tool or helper is required.
+And your maximum iteration should not exceed {max_iteration}.
+
+**AVAIALBLE MODALITIES**
+Note that you are capable of processing following modalities in I/O.
+Input: {modality_in}
+Output: {modality_out}
+
+**AVAILABLE TOOLS**
+{tool_list}
+
+**AVAILABLE HELPERS**
+- Decomposition: Breaks Complex Questions down into simpler subparts
+
+**WARNING**
+When you use any image during any process, provide its URL at the final answer, separated with its body.
+
+**CONTEXTUAL INFORMATION**
+{context}
+
+**QUESTION**
+{question}
+"""
+SYSTEM_ANSWER_TEMPLATE = """
+**ANSWER FORMAT**
+{'Tool_Request': '<Fill>', 'Helper_Request': '<Fill>'}
+"""
+
 class TogetherAPIEngine():
 	def __init__(
 		self,
@@ -22,6 +52,7 @@ class TogetherAPIEngine():
 		verbose : bool = False,
 		free_tier : bool = False,
 		tools : List[Optional[Tool]] = [],
+		modality_io: str = 'text/text',
 	):
 		self.client = Together()
 		self.model = model
@@ -35,28 +66,12 @@ class TogetherAPIEngine():
 		self.cnt_iter = 0
 
 		self.free_tier = free_tier
+		self.modality_in, self.modality_out = modality_io.split('/')
+		self.modality_in = list(self.modality_in.split(','))
+		self.modality_out = list(self.modality_out.split(','))
 
-		self.validation_prompt = """
-		**GENERAL INSTRUCTIONS**
-		Your task is to answer questions. If you cannot answer the question, request a helper or use a tool. Fill with Nil where no tool or helper is required.
-		
-		**AVAILABLE TOOLS**
-		{tool_list}
-		
-		**AVAILABLE HELPERS**
-		- Decomposition: Breaks Complex Questions down into simpler subparts
-		
-		**CONTEXTUAL INFORMATION**
-		{context}
-		
-		**QUESTION**
-		{question}
-		"""
-
-		self.validation_answer_format = """
-		**ANSWER FORMAT**
-		{'Tool_Request': '<Fill>', 'Helper_Request': '<Fill>'}
-		"""
+		self.validation_prompt = SYSTEM_PROMPT_TEMPLATE
+		self.validation_answer_format = SYSTEM_ANSWER_TEMPLATE
 
 		self.answer_dict_regexp = re.compile(r"\{[^\{\}]*\}")
 
@@ -83,14 +98,17 @@ class TogetherAPIEngine():
 		)
 		llm_input = self.validation_prompt.format(
 			# TODO: Refine current `tool_list` which just listed the tools
-			#		To the explanation of each tools.
+			# 		to the explanation of each tools.
+			max_iteration=self.max_iter,
+			modality_in=self.modality_in,
+			modality_out=self.modality_out,
 			tool_list=str_tools,
 			context="\n".join([
 				f"[{m['role']}]\n{m['content']}\n"
 			for m in self.memory]),
 			question=question,
 		) + '\n' + self.validation_answer_format
-		str_answer = self.__ask_LLM(llm_input)
+		str_answer = self.__ask_LLM(llm_input, None)
 
 		answer_dict = self.__retrieve_answer_dict(str_answer)
 
@@ -117,6 +135,7 @@ class TogetherAPIEngine():
 			err_msg = f"Corresponding tool for the request of '{t_req}' does not exist."
 			print(err_msg)
 			self.memorize('', f"[Tool calling error report]\n{err_msg}\n[Tool calling error report end]\n")
+			return
 		#return self.tools[t_req](t_arg)
 		
 		t_arg_str = self.__ask_LLM(f'Using the context, generate the python dictionary of arguments to use the tool named \'{t_req}\'.')
@@ -165,7 +184,7 @@ class TogetherAPIEngine():
 
 		# TODO: Save the memory to the text file by LLM.
 		self.save_mem_to_file(
-			os.path.join(os.getcwd(), 'temp.log')
+			os.path.join(os.getcwd(), 'tempVL.log')
 		)
 		# Clean up resources.
 		self.manage_resource()
@@ -173,14 +192,37 @@ class TogetherAPIEngine():
 		return final_answer
 
 	# Reuse repetitive pattern
-	def __ask_LLM(self, question=''):
-		response = self.client.chat.completions.create(
-			model = self.model,
-			messages = self.memory + [{
-				"role": "user",
-				"content": question,
-			}]
-		).choices[0].message.content
+	# Retrieve URL information from memory and utilize it here.
+	def __ask_LLM(self, question:str='', image_urls:Optional[List[str]]=None):
+		if image_urls is None:
+			image_urls = []
+		if len(image_urls)>0 and 'image' in self.modality_in:
+			response = self.client.chat.completions.create(
+				model = self.model,
+				messages = self.memory + [{
+					"role": "user",
+					"content": [
+						{"type": "text", "text": question},
+						# TODO: Change to local image inference.
+						{"type": "image_url", "image_url": {"url": {image_urls[0]}}}
+					]
+				}] + [{
+					"role": "user",
+					"content": [
+						{"type": "image_url", "image_url": {"url": {i_url}}}
+					]
+				} for i_url in image_urls[1:]]
+			).choices[0].message.content
+		else:
+			response = self.client.chat.completions.create(
+				model = self.model,
+				messages = self.memory + [{
+					"role": "user",
+					"content": question,
+				}]
+			).choices[0].message.content
+		#else:
+		#	raise ValueError(f"Check `__ask_LLM()` template of `TogetherAPIEngine`.")
 
 		if self.verbose:
 			print(f"[User] {question}")
