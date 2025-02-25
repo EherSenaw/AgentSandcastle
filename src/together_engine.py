@@ -9,7 +9,7 @@ from together import Together
 from src.tools import verify_hf_tools
 from src.prompt_template import (
 	SYSTEM_PROMPT_TEMPLATE,
-	SYSTEM_ANSWER_TEMPLATE,
+	#SYSTEM_ANSWER_TEMPLATE,
 )
 from transformers.utils import (
 	get_json_schema

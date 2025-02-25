@@ -52,7 +52,7 @@ def main(args):
 			model=args.llm_model_name,
 			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
 			max_iteration=5,
-			verbose=True,
+			verbose=args.verbose,
 			free_tier=True,
 			modality_io=args.llm_modality_io,
 		)
@@ -62,9 +62,9 @@ def main(args):
 			model=args.llm_model_name,
 			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
 			max_iteration=5,
-			verbose=True,
+			verbose=args.verbose,
 			modality_io=args.llm_modality_io,
-			max_new_tokens=1024,
+			max_new_tokens=args.max_new_tokens,
 		)
 	else:
 		raise ValueError("Provide at least one LLM API provider.")
