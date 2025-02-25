@@ -22,9 +22,6 @@ from smolagents import (
 	PythonInterpreterTool,
 )
 
-# TogetherAI related. If get errors, do `pip install together`.
-#from together import Together
-
 def single_run(args):
 	if args.hf_api_token != '':
 		login(args.hf_api_token)
@@ -42,6 +39,7 @@ def single_run(args):
 	Create a single text file named 'temp.txt', filled with about 10 random words, in current directory.
 	""")
 
+# TogetherAI related. If get errors, do `pip install together`.
 def main(args):
 	if args.hf_api_token != '':
 		login(args.hf_api_token)
