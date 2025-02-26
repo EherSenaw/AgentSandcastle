@@ -97,6 +97,20 @@ Completion:
 Above, the Completion did not satisfy the constraints given in the Prompt.
 Please try again:"""
 
+# NOTE: Used for Structured output parsing.
+JSON_FORMAT_INSTRUCTIONS = """The output should be formatted as a JSON instance that conrforms to the JSON schema below.
+
+As an example, for the schema {{"properties": {{"foo": {{"title": "Foo", "description": "a list of strings", "type": "array", "items": {{"type": "string"}}}}}}, "required": ["foo"]}}
+the object {{"foo": ["bar", "baz"]}} is a well-formatted instance of the schema. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not well-formatted.
+
+Here is the output schema:
+```
+{schema}
+```
+
+Only respond in the correct format, do not include additional properties in the JSON."""
+PYDANTIC_FORMAT_INSTRUCTIONS = JSON_FORMAT_INSTRUCTIONS
+
 # NOTE: OLD version of the system prompt.
 OLD_SYSTEM_PROMPT_TEMPLATE = """
 **GENERAL INSTRUCTIONS**

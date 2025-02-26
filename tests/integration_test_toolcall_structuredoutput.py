@@ -77,7 +77,7 @@ if __name__ == "__main__":
 	output = retrieve_non_think(output)
 
 	try:
-		parsed_output = parser.parse_result(output)
+		parsed_output = parser.invoke(output)
 		print(f"Initial parse succeed.")
 	except OutputParserException as e:
 		print("Retry with OutputParserException..")

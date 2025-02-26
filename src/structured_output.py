@@ -1,21 +1,29 @@
-# NOTE: From LangChain's langchain-extract example github.
+# NOTE: Based on LangChain's langchain-extract example github.
 import re
 import json
 import contextlib
 import pydantic
+
 from abc import ABC, abstractmethod
-from json import JSONDecodeError
-from pydantic import BaseModel, Field, validator, SkipValidation
 from typing import List, Dict, Any, Generic, Optional, Union, TypeVar, Annotated, Callable, TypedDict
 from typing_extensions import override
+
+from json import JSONDecodeError
 from jsonschema import exceptions
 from jsonschema.validators import Draft202012Validator
+from pydantic import BaseModel, Field, validator, SkipValidation
 
-#from langchain_core.language_models import LanguageModelOutput
-from langchain_core.runnables import RunnableSerializable
-#from langchain_core.runnables import Runnable
+from langchain_core.runnables import RunnableSerializable #, Runnable
 #from langchain_core.load.serializable import Serializable
+#from langchain_core.language_models import LanguageModelOutput
 
+from src.prompt_template import (
+	NAIVE_COMPLETION_RETRY, JSON_FORMAT_INSTRUCTIONS, PYDANTIC_FORMAT_INSTRUCTIONS,
+)
+from src.utils import (
+	retrieve_non_think,
+	JSON_MARKDOWN_REGEXP, JSON_STRIP_CHARS
+)
 from src.exceptions import OutputParserException
 # NOTE: For my usage, do not need streaming output handling. Therefore, just use BaseOutputParser.
 #from langchain_core.output_parsers.transform import BaseCumulativeTransformOutputParser
@@ -23,22 +31,6 @@ from src.exceptions import OutputParserException
 #from langchain_core.utils.json import (parse_partial_json)
 #from langchain_core.messages import AnyMessage
 #from langchain_core.utils.pydantic import PYDANTIC_MAJOR_VERSION
-
-JSON_FORMAT_INSTRUCTIONS = """The output should be formatted as a JSON instance that conrforms to the JSON schema below.
-
-As an example, for the schema {{"properties": {{"foo": {{"title": "Foo", "description": "a list of strings", "type": "array", "items": {{"type": "string"}}}}}}, "required": ["foo"]}}
-the object {{"foo": ["bar", "baz"]}} is a well-formatted instance of the schema. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not well-formatted.
-
-Here is the output schema:
-```
-{schema}
-```
-
-Only respond in the correct format, do not include additional properties in the JSON."""
-
-_PYDANTIC_FORMAT_INSTRUCTIONS = JSON_FORMAT_INSTRUCTIONS
-_json_markdown_re = re.compile(r"```(json)?(.*)", re.DOTALL)
-_json_strip_chars = " \n\r\t`"
 
 T = TypeVar("T")
 
@@ -139,7 +131,7 @@ def _parse_json(
 	json_str: str, *, parser: Callable[[str], Any] = parse_partial_json
 ) -> dict:
 	# Strip whitespace, newlines, backtick from the start and end
-	json_str = json_str.strip(_json_strip_chars)
+	json_str = json_str.strip(JSON_STRIP_CHARS)
 	# handle newlines and other special characters inside the returned value
 	json_str = _custom_parser(json_str)
 	# Parse the JSON string into a Python dictionary
@@ -159,7 +151,7 @@ def parse_json_markdown(
 		return _parse_json(json_string, parser=parser)
 	except json.JSONDecodeError:
 		# Try to find JSON string within triple backticks
-		match = _json_markdown_re.search(json_string)
+		match = JSON_MARKDOWN_REGEXP.search(json_string)
 
 		# If no match found, assume the entire string is a JSON string
 		# Else, use the content within the backticks
@@ -179,6 +171,8 @@ def validate_json_schema(schema: Dict[str, Any]) -> None:
 		'''
 		raise ValueError(f"Not a valid JSON schema: {e.message}")
 
+# NOTE: Pydantic-style declaration used in extraction example of Langchain.
+'''
 class ExtractionExample(BaseModel):
 	"""An example extraction.
 
@@ -216,8 +210,9 @@ class ExtractRequest(BaseModel):
 		"""Validate the schema."""
 		validate_json_schema(v)
 		return v
+'''
 
-# NOTE: Tweaked source code from LangChain's BaseOutputParser source.
+# NOTE: Tweaked from & Based on source code of LangChain's BaseOutputParser.
 class BaseLLMOutputParser(Generic[T], ABC):
 	"""Abstract base class for parsing the outputs of a model."""
 
@@ -327,7 +322,7 @@ class BaseOutputParser(
 		return self._call_with_config(
 			lambda inner_input: self.parse_result(inner_input),
 			input,
-			#config,
+			None,
 			run_type="parser",
 		)
 
@@ -548,7 +543,7 @@ class PydanticOutputParser(JsonOutputParser, Generic[TBaseModel]):
 		# Ensure json in context is well-formed with double quotes.
 		schema_str = json.dumps(reduced_schema, ensure_ascii=False)
 
-		return _PYDANTIC_FORMAT_INSTRUCTIONS.format(schema=schema_str)
+		return PYDANTIC_FORMAT_INSTRUCTIONS.format(schema=schema_str)
 	
 	@property
 	def _type(self) -> str:
@@ -559,14 +554,6 @@ class PydanticOutputParser(JsonOutputParser, Generic[TBaseModel]):
 	def OutputType(self) -> type[TBaseModel]:
 		"""Return the pydantic model."""
 		return self.pydantic_object
-
-NAIVE_RETRY_PROMPT_TEMPLATE = """Prompt:
-{prompt}
-Completion:
-{completion}
-
-Above, the Completion did not satisfy the constraints given in the Prompt.
-Please try again:"""
 
 class RetryOutputParserRetryChainInput(TypedDict):
 	prompt: str
@@ -588,7 +575,7 @@ class RetryOutputParser(BaseOutputParser[T]):
 	]
 	"""The LLM engine to use to retry the completion. Additionally can include tokenizer or processor in the list."""
 
-	prompt_template: str = NAIVE_RETRY_PROMPT_TEMPLATE
+	prompt_template: str = NAIVE_COMPLETION_RETRY
 	"""The prompt template to use to retry the completion."""
 
 	max_retries: int = 1
@@ -599,7 +586,7 @@ class RetryOutputParser(BaseOutputParser[T]):
 		cls,
 		llm: Any, # Instance of any compatible LLMEngine
 		parser: BaseOutputParser[T],
-		prompt_template: str = NAIVE_RETRY_PROMPT_TEMPLATE,
+		prompt_template: str = NAIVE_COMPLETION_RETRY,
 		max_retries: int = 1,
 	) -> T:
 		"""Create an RetryOutputParser from a language model and a parser.
@@ -627,26 +614,6 @@ class RetryOutputParser(BaseOutputParser[T]):
 		"""
 		retries = 0
 		from mlx_lm import generate
-
-		""" NOTE: Temporally ctrl+c/v -ed here."""
-		import re
-		THINK_REGEXP = re.compile(r"<think>.*<\/think>", re.DOTALL)
-		def retrieve_non_think(str_response:str) -> str:
-			if '<think>' not in str_response:
-				return str_response
-			retval = ''
-			n = len(str_response)
-			for candidate in THINK_REGEXP.finditer(str_response):
-				s, e = candidate.span()
-
-				if s > 0:	left = str_response[:s]
-				else:		left = ''
-
-				if e < n:
-					right = str_response[e:]
-					break
-			return right.strip()
-		""" NOTE: Temporally ctrl+c/v -ed here."""
 
 		while retries <= self.max_retries:
 			try:

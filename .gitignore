@@ -172,3 +172,4 @@ cython_debug/
 
 # Custom
 run_debug.sh
+run_test_debug.sh

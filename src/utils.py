@@ -1,11 +1,14 @@
 import re
 
-from typing import Any,Type,Optional
+from typing import Any, Type, Optional, Dict, List
 from enum import Enum
 
 from pydantic import BaseModel, Field, create_model
 
 THINK_REGEXP = re.compile(r"<think>.*<\/think>", re.DOTALL)
+JSON_MARKDOWN_REGEXP = re.compile(r"```(json)?(.*)", re.DOTALL)
+JSON_STRIP_CHARS = " \n\r\t`"
+
 def retrieve_non_think(str_response: str) -> str:
 	if '<think>' not in str_response:
 		return str_response
@@ -85,3 +88,50 @@ def json_schema_to_base_model(schema: dict[str, Any]) -> Type[BaseModel]:
         model_fields[field_name] = process_field(field_name, field_props)
 
     return create_model(schema.get("title", "DynamicModel"), **model_fields)
+
+def get_parse_chain(
+    format_instructions: str,
+    query: str,
+	tool_list: Optional[str],
+	chain_template: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+	# If want to use any tool, should be parsed something like:
+    # ```
+	# from src.tools import web_search as example_func
+	# example_func_json_schema = example_func.args_schema.model_json_schema()
+	# tool_list = '- web_search: {example_func.description}'
+	# ```
+	# Maybe, tool_list can be like:
+	# "- {example_func1.name}: {example_func1.description}
+	#  - {example_func2.name}: {example_func2.description}"
+
+	# `chain_template` is in the same form with the chat memory. Where
+	#		0-th element should be system prompt, having `format_instructions` keyword.
+	#			Normally, `format_instructions` should be acquired by parser.get_format_instructions().
+	#		1-th element should be user prompt, having `query` keyword.
+	# Default chain_template.
+	if chain_template is None:
+		chain_template = [
+			{
+				"role": "system",
+				"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}"\
+                    + f"\n**AVAILABLE TOOLS**\n{tool_list}" if tool_list else ""
+			},
+			{
+				"role": "user",
+				"content": "{query}"
+			}
+		]
+
+	parse_chain = list(map(
+		lambda x: {
+			"role": x["role"],
+			"content": x["content"].format(
+				format_instructions=format_instructions
+			) if x["role"] == "system" else x["content"].format(
+				query=query
+			)
+		}, chain_template
+	))
+
+	return parse_chain

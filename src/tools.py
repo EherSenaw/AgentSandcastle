@@ -163,3 +163,40 @@ def web_search_retrieve_images(query: str) -> str:
 	image_urls = [result['image'] for result in results]
 	print(f"## Search Results (Displaying image titles)\n\n" + "\n\n".join(image_titles))
 	return "\n\n".join(image_urls)
+
+####################
+# No-dependency for the tools declared from now.
+# IMPORTANT: MUST include Google-style Docstrings to prevent malfunctioning.
+# NOTE: Try @tool with `parse_docstring=True`, for easy use conversion of
+#		user-defined python function to LLM-callable tool.
+#		Docstring will be parsed into Pydantic object (and JSON).
+#		This information will be provided into LLM
+#		and used during structured output validation / tool calling.
+####################
+@tool(parse_docstring=True)
+def web_search(query: str) -> str:
+	"""Search web with query using DuckDuckGoSearch, to retrieve results found with query.
+
+	Args:
+		query: Query to search for.
+
+	Returns:
+		The string format contents found with search using query.
+	"""
+	verbose = False # NOTE: Set to True if you need to see search results in this tool call.
+
+	try:
+		from duckduckgo_search import DDGS
+	except ImportError as e :
+		raise ImportError(
+			"You must install package `duckduckgo_search` to run this tool. For instance, run `pip install duckduckgo-search`."
+		) from e
+	
+	results = DDGS().text(query, max_results=5)
+	assert len(results) > 0, "No results found for tool(`web_search`). Try a less restrictive or shorter query."
+
+	if verbose:
+		for res in results:
+			print(f"## Search Results (Displaying titles with bodies)\nTITLE: {res['title']}\n{res['body']}\n\n")
+	search_result_str = "\n\n".join([f"TITLE: {res['title']}\n{res['body']}" for res in results])
+	return search_result_str
