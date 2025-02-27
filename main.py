@@ -2,7 +2,6 @@ from src.arguments import build_args
 from src.tools import (
 	save_file, read_file, list_files,
 	open_url_to_PIL_image,
-	DuckDuckGoSearchToolReturnImages,
 	web_search,
 	web_search_retrieve_images,
 )

@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Union
 import PIL
+import PIL.Image
 # NOTE: (Legacy, not anymore.) For PoC, use huggingface(smolagents)'s Tool interface.
 #		For custom tool implementation with use of @tool,
 # 		check `github.com/huggingface/smolagents/blob/main/src/smolagents/tools.py#L840`.
@@ -72,7 +73,6 @@ def open_url_to_PIL_image(url: str) -> PIL.Image:
 	Returns:
 		PIL.Image object.
 	"""
-	import PIL
 	import requests
 	image_response = requests.get(url)
 	img = PIL.Image.open(image_response.raw)
