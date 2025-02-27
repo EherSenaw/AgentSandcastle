@@ -33,6 +33,11 @@ def build_args():
 		help='Set default \'verbose\' behaviors.'
 	)
 
+	parser.add_argument('--manual_answer_format',
+		type=str, default='',
+		help='If you want to instruct the agent to answer with your own format manually, provide instruction here. This possibly will disable the auto-parsing & calling of the tool of LLM.'
+	)
+
 	parser.add_argument('--initial_question',
 		type=str, default='Which one is bigger? 1.02 or 1.2?',
 		help='Initial question that should be asked to the Agent.'

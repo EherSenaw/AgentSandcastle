@@ -1,20 +1,20 @@
 import time, re, os
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
-from src.tools import verify_hf_tools, verify_tools_docstring
+from src.tools import process_request, process_binary, save_file
+from src.utils import ANSWER_DICT_REGEXP, THINK_REGEXP, retrieve_non_think, json_schema_to_base_model
 from src.prompt_template import (
-	SYSTEM_PROMPT_TEMPLATE,
+	LC_SYSTEM_PROMPT_TEMPLATE,
+	#SYSTEM_PROMPT_TEMPLATE,
 	#PROMPT_TEMPLATE,
 	SYSTEM_ANSWER_TEMPLATE,
+	NAIVE_COMPLETION_RETRY,
 )
-from src.structured_output import PydanticOutputParser
+from src.structured_output import PydanticOutputParser, RetryOutputParser
 from src.tool_convert import tool
+from src.exceptions import OutputParserException
 
 from pydantic import BaseModel, Field
-
-from transformers.utils import get_json_schema
-from smolagents import Tool #,tool
-from smolagents.utils import make_json_serializable
 
 from mlx_lm import load, generate
 
@@ -25,17 +25,7 @@ from mlx_vlm import (
 from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 from mlx_vlm.utils import load_config as vlm_load_config
 
-# NOTE: DEBUG for structured_output parsing from LLm output and integrating it with tool calling.
-class Person(BaseModel):
-	"""Information about a person."""
-
-	name: str = Field(..., description="The name of the person")
-
-class People(BaseModel):
-	"""Identifying information about all people in a text."""
-
-	people: List[Person]
-
+'''
 parser = PydanticOutputParser(pydantic_object=People)
 parse_chain_template = [
 	{
@@ -49,7 +39,7 @@ parse_chain_template = [
 		"content": "{query}",
 	},
 ]
-
+'''
 
 class MLXEngine():
 	def __init__(
@@ -57,9 +47,10 @@ class MLXEngine():
 		model : str = 'mlx-community/DeepScaleR-1.5B-Preview-4bit',
 		max_iteration : int = 5,
 		verbose : bool = False,
-		tools : List[Optional[Tool]] = [],
+		tools : List[Optional[Any]] = [], #List[Optional[Tool]] = [],
 		modality_io : str = 'text/text',
 		max_new_tokens : int = 1024,
+		manual_answer_format : Optional[str] = '', # To denote Legacy-style `prompt-level` forcing of structured output.
 	):
 		self.model = model
 		self.max_iter = max_iteration
@@ -69,30 +60,25 @@ class MLXEngine():
 		#self.tools = verify_tools_docstring(tools)
 		self.tools = dict()
 		for t in tools:
-			'''
-			# NOTE: Currently using @tool from smolagents,
-			# 		but maybe simply replaced with Google-style docstring parser.
-			if hasattr(t, 'name'):
-				t_name = t.name
-			elif hasattr(t, '__name__'):
-				t_name = t.__name__
-			self.tools[t_name] = t
-			'''
+			# NOTE: Now using LangChain-style @tool decorator, which parses the tool's Google-style docstring automatically.
 			t_schema = t.args_schema.model_json_schema()
-			t_name = t_schema['title'][:-6] # postfix removal by -6 ('Schema')
+			t_name = t_schema['title']
 			#t_description = t_schema['description']
 			assert t_name not in self.tools, "The name(`title`) of the tool should not be duplicated."
 			self.tools[t_name] = t
 
-		self.memory = []
-		self.cnt_iter = 0
+		self.memory = [] # Chat memory.
+		self.cnt_iter = 0 # Thinking iterations counter.
+		self.max_new_tokens = max_new_tokens # Set maximum tokens to generate, for the LLM.
 
+		# NOTE: To support multimodal input / output models & agents.
+		#		Currently tested I/O: Text/Text, Text+Img/Text.
+		# WARNING: Structured output & tool auto-parsing & calling is not strictly tested for VLM.
 		self.modality_in, self.modality_out = modality_io.split('/')
 		self.modality_in = list(self.modality_in.split(','))
 		self.modality_out = list(self.modality_out.split(','))
 
-		self.max_new_tokens = max_new_tokens
-		# Check VLM
+		# Flag for VLM usage.
 		self.USE_VLM = True if len(self.modality_in) > 1 else False
 		if self.USE_VLM:
 			self.client, self.processor = vlm_load(self.model)
@@ -100,34 +86,35 @@ class MLXEngine():
 		else:
 			self.client, self.tokenizer = load(self.model)
 
-		self.validation_prompt = SYSTEM_PROMPT_TEMPLATE
-		self.validation_answer_format = SYSTEM_ANSWER_TEMPLATE
-
+		# LLM engine system prompt setup.
+		self.validation_prompt = LC_SYSTEM_PROMPT_TEMPLATE
+		if manual_answer_format and manual_answer_format != '':
+			# NOTE: Replace with manual_answer_format given. Currently using legacy for debug purpose.
+			self.validation_answer_format = SYSTEM_ANSWER_TEMPLATE
+		else:
+			self.validation_answer_format = None
+		# Initialize chat memory with system prompt.
 		self.__init_memory(self.verbose)
-
-		self.answer_dict_regexp = re.compile(r"\{[^\{\}]*\}")
-		self.think_regexp = re.compile(r"<think>.*<\/think>", re.DOTALL)
 
 	def __init_memory(self, verbose:bool=False):
 		self.memory.append({
-			"role": "system",
-			#"role": "user",
+			"role": "system", #'user',
 			"content": self.validation_prompt.format(
-				foo='foo', bar='bar',
-				# Refined `tool_list` with Google DocString.
 				max_iteration=self.max_iter,
 				modality_in=self.modality_in,
 				modality_out=self.modality_out,
+				# NOTE: Legacy tool description for testing the availablity of using prompt instructions only to force the structured output.
 				#tool_list='\n'.join(f"- {t_name}: {tool.description}\n\tArgs: {tool.inputs}\n\tReturns: {tool.output_type}" for t_name,tool in self.tools.items()),
 				tool_list='\n'.join(f"- {t_name}: {tool.description}" for t_name,tool in self.tools.items()),
-				max_new_tokens=self.max_new_tokens,
-		)})
-		#)+'\n'+self.validation_answer_format})
-		# NOTE: Separate answer format from the body. This is for further INTENDED IGNORE of answer format.
-		self.memory.append({
-			"role": "user",
-			"content": self.validation_answer_format
+				#max_new_tokens=self.max_new_tokens,
+		)#+'\n'+self.validation_answer_format})
 		})
+		if self.validation_answer_format:
+			# NOTE: Separate answer format from the body. This is for further INTENDED IGNORE of answer format.
+			self.memory.append({
+				"role": "user",
+				"content": self.validation_answer_format
+			})
 
 	def __call__(self, question:str=''):
 		# Check if any TOOLs or HELPs needed.
@@ -161,11 +148,8 @@ class MLXEngine():
 				llm_input_observation = f"Finished tool-using and help-requesting of current action. Do rest part within this action({ans_action})"
 
 			# Do action and retrieve observation.
-			#llm_input_observation = f"Do: {action}"
 			observation = self.__ask_LLM(llm_input_observation)
-
 			# Store to memory.
-			#self.memorize(llm_input_action, action)
 			self.memorize(llm_input_observation, observation)
 
 		# Get final answer.
@@ -186,6 +170,7 @@ class MLXEngine():
 		image_urls : Optional[List[str]] = None,
 		minimal : Optional[bool] = False,
 		ignore_answer_format : Optional[bool] = False,
+		parser: Optional[PydanticOutputParser] = None, # NOTE: Provide parser to use auto-parsing structured output for tools generated with @tool decorator.
 	):
 		if image_urls is None:
 			image_urls = []
@@ -210,37 +195,60 @@ class MLXEngine():
 				)
 			output = vlm_generate(self.client, self.processor, formatted_prompt, image_urls, verbose=self.verbose)
 		else:
-			if ignore_answer_format:
+			if ignore_answer_format and self.validation_answer_format:
 				prompt = self.tokenizer.apply_chat_template(
 					self.memory[0:1] + \
-					self.memory[2:] if len(self.memory)>2 else [] + \
+					(self.memory[2:] if len(self.memory)>2 else []) + \
+					([{
+						"role": "system",
+						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
+							format_instructions=parser.get_format_instructions()
+						)
+					}] if parser else []) + \
 					[{
 						"role": "user",
 						"content": question,
 					}],
-					add_generation_prompt=True
+					add_generation_prompt=True,
+					tokenize=False if parser else True,
 				)
 			else:
 				prompt = self.tokenizer.apply_chat_template(
 					self.memory + \
+					([{
+						"role": "system",
+						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
+							format_instructions=parser.get_format_instructions()
+						)
+					}] if parser else []) + \
 					[{
 						"role": "user",
 						"content": question,
 					}],
-					add_generation_prompt=True
+					add_generation_prompt=True,
+					tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
 				)
-			'''
-			print(f"[DEBUG] PROMPT: ")
-			for m in self.memory+[{"role":"user", "content": question}]:
-				print(f"[DEBUG]\t{m['role']}: {m['content']}")
-			'''
 			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
-			output = self.__retrieve_non_think(output.strip(), minimal=minimal)
+			#output = self.__retrieve_non_think(output.strip(), minimal=minimal)
+			output = retrieve_non_think(output.strip(), remove_think_only=minimal)
+			# NOTE: structured output auto-parsing
+			if parser:
+				try:
+					parsed_output = parser.invoke(output)
+				except OutputParserException as e:
+					retry_parser = RetryOutputParser.from_llm(
+						parser=parser,
+						llm = (self.client, self.tokenizer),
+						prompt_template=NAIVE_COMPLETION_RETRY,
+						max_retries=self.max_iter,
+					)
+					parsed_output = retry_parser.parse_with_prompt(output, prompt)
+				return output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
 		return output
 
 	def __retrieve_answer_dict(self, str_answer:str) -> Dict:
 		ans_dict_list = []
-		for candidate in self.answer_dict_regexp.finditer(str_answer.strip()):
+		for candidate in ANSWER_DICT_REGEXP.finditer(str_answer.strip()):
 			try:
 				c = eval(candidate.group())
 				assert isinstance(c, dict), "{candidate} is not a dict."
@@ -250,58 +258,51 @@ class MLXEngine():
 		if len(ans_dict_list) < 1:
 			return dict()
 		return ans_dict_list[-1]
-	def __retrieve_non_think(self, str_response:str, minimal:bool=False) -> str:
-		# NOTE: Before calling this, using .strip() is preferred.
-		if '<think>' not in str_response:
-			return str_response
-		retval = ''
-		n = len(str_response)
-		for candidate in self.think_regexp.finditer(str_response):
-			s, e = candidate.span()
-			if s > 0:
-				left = str_response[:s]
-			else:
-				left = ''
-			if e < n:
-				right = str_response[e:]
-				# Normally, answer comes after the <think>....</think>.
-				# Just use 'right' part.
-				if minimal:
-					# NOTE: Minimal-mode --> just remove <think> and </think> tags.
-					retval = left + str_response[s+7:e-8] + right
-				else:
-					retval = right
-				break
-		return retval.strip()
-	
 
 	def check_request(self, question='', init=False):
-		#llm_input = question + '\n' + self.validation_answer_format
-		llm_input = question
+		# 1. Check question and what things are needed.
+		llm_input = question # + '\n' + self.validation_answer_format
 		if init:
 			llm_input = f"**QUESTION**\n{question}"
-		str_answer = self.__ask_LLM(llm_input, None)
-		answer_dict = self.__retrieve_answer_dict(str_answer)
 
-		t_req, h_req, ans, res = None, None, None, None
-		if "Tool_Request" in answer_dict:
-			t_req = answer_dict["Tool_Request"]
-			if t_req.lower() == "nil":
-				t_req = None
-		if "Helper_Request" in answer_dict:
-			h_req = answer_dict["Helper_Request"]
-			if h_req.lower() == "nil":
-				h_req = None
-		if "Answer" in answer_dict:
-			ans = answer_dict["Answer"]
-			if ans.lower() == "nil":
-				ans = None
+		if self.validation_answer_format:
+			str_answer = self.__ask_LLM(llm_input)
+			answer_dict = self.__retrieve_answer_dict(str_answer)
 		else:
-			ans = str_answer
-		if "Rationale" in answer_dict:
-			res = answer_dict["Rationale"]
-			if res.lower() == "nil":
-				res = None
+			parser = PydanticOutputParser(pydantic_object=json_schema_to_base_model(process_request.args_schema.model_json_schema()))
+			# NOTE: parsing conducted inside of `__ask_LLM` function.
+			str_answer, answer_dict = self.__ask_LLM(llm_input, parser=parser)
+		
+		if isinstance(answer_dict, dict):
+			#raise ValueError(f"Legacy style returned. Check MLXEngine().check_request().")
+			t_req, h_req, ans, res = None, None, None, None
+			if "Tool_Request" in answer_dict:
+				t_req = answer_dict["Tool_Request"]
+				if t_req.lower() == "nil":
+					t_req = None
+			if "Helper_Request" in answer_dict:
+				h_req = answer_dict["Helper_Request"]
+				if h_req.lower() == "nil":
+					h_req = None
+			if "Answer" in answer_dict:
+				ans = answer_dict["Answer"]
+				if ans.lower() == "nil":
+					ans = None
+			else:
+				ans = str_answer
+			if "Rationale" in answer_dict:
+				res = answer_dict["Rationale"]
+				if res.lower() == "nil":
+					res = None
+		else:
+			t_req = answer_dict.tool_request
+			if t_req.lower() == 'nil': t_req = None
+			h_req = answer_dict.helper_request
+			if h_req.lower() == 'nil': h_req = None
+			ans = answer_dict.answer
+			if ans.lower() == 'nil': ans = None
+			res = answer_dict.rationale
+			if res.lower() == 'nil': res = None
 
 		# Save result to memory.
 		self.memorize(llm_input, str_answer)
@@ -314,32 +315,40 @@ class MLXEngine():
 		t_req = t_req.lower()
 		# NOTE: Parse.
 		if t_req not in self.tools:
-			print(f"\nTrying to parse the tool request from: {t_req}")
 			parsed_req = self.__ask_LLM(f'Get the name of the tool that corresponds to the following request:`{t_req}`. You should lookup for the available tools you have. Return the name of the tool only (without any special characters or any other words)')
-			print('\n'+parsed_req+'\n')
 			t_req = parsed_req.lower()
 		# Default
 		if t_req not in self.tools:
 			err_msg = f"Corresponding tool for the request of '{t_req}' does not exist."
-			print('\n'+err_msg+'\n')
 			self.memorize('', f"[Tool calling error report]\n{err_msg}\n[Tool calling error report end]\n")
 			return
 		
+		'''Legacy (instruction-only forcing structured output.)
 		retrieve_prompt = f'Return the dictionary of inputs for the tool \'{t_req}\'. The tool spec is following:\n**Description**\n{self.tools[t_req].description}\n**Args**\n{self.tools[t_req].inputs}\n**Returns**\n{self.tools[t_req].output_type}'
-		print(f"\nretrieve_prompt: {retrieve_prompt}\n")
-		t_arg_str = self.__ask_LLM(retrieve_prompt, ignore_answer_format=True)
-		print(f"\nt_arg_str: {t_arg_str}\n")
-		t_arg = self.__retrieve_answer_dict(t_arg_str)
-		if "Tool_Request" in t_arg:
-			del t_arg["Tool_Request"]
-		if "Helper_Request" in t_arg:
-			del t_arg["Helper_Request"]
-		print(f"\nt_arg: {t_arg}\n")
-
-		#tool_result = self.tools[t_req](**t_arg)
-		tool_result = self.tools[t_req](**{k:v for k,v in t_arg.items() if k in self.tools[t_req].inputs})
-		print(f"[DEBUG] tool_result: {tool_result}")
-		# Record tool results for furthur use.
+		'''
+		# NOTE: Systemic approach for structured output.
+		retrieve_prompt = f'Return the dictionary of inputs for the tool \'{t_req}\' for current step.'
+		parser = PydanticOutputParser(
+			pydantic_object=json_schema_to_base_model(self.tools[t_req].args_schema.model_json_schema())
+		)
+		if parser:
+			t_arg_str, t_arg = self.__ask_LLM(retrieve_prompt, ignore_answer_format=True, parser=parser)
+			t_arg = t_arg.model_dump()
+			try:
+				tool_result = self.tools[t_req](t_arg)
+			except :
+				tool_result = self.tools[t_req].invoke(t_arg)
+		else:
+			t_arg_str = self.__ask_LLM(retrieve_prompt, ignore_answer_format=True, parser=parser)
+			t_arg = self.__retrieve_answer_dict(t_arg_str)
+			'''
+			if "Tool_Request" in t_arg:
+				del t_arg["Tool_Request"]
+			if "Helper_Request" in t_arg:
+				del t_arg["Helper_Request"]
+			'''
+			tool_result = self.tools[t_req](**{k:v for k,v in t_arg.items() if k in self.tools[t_req].inputs})
+		# Record tool results for later use.
 		if tool_result:
 			self.memorize('', f'[Observation of Tool {t_req}]\nWith argument: `{t_arg}`\n'+tool_result+'\n[Observation end]\n')
 		
@@ -366,7 +375,7 @@ class MLXEngine():
 		self.cnt_iter = 0
 
 	# Decision
-	def continue_iteration(self):
+	def continue_iteration(self, use_legacy=False):
 		if len(self.memory) <= 1:
 			# Only system prompt.
 			#self.cnt_iter += 1
@@ -377,10 +386,23 @@ class MLXEngine():
 		# Ask if the answer was given for the question.
 		# If no, we should continue iteration.
 		# If yes, we should stop iteration.
-		assistant_decision = self.__ask_LLM(
-			"Do you think you resolved the initial question? If you think so, answer 'Yes'. If not, answer 'No'. You must answer in either 'Yes' or 'No', without any other strings.",
-			minimal=False,
-		).lower()
+		if use_legacy:
+			'''Legacy (instruction-only)
+			'''
+			assistant_decision = self.__ask_LLM(
+				"Do you think you resolved the initial question? If you think so, answer 'Yes'. If not, answer 'No'. You must answer in either 'Yes' or 'No', without any other strings.",
+				minimal=False,
+			).lower()
+		else:
+			# NOTE: System-instructed structured processing.
+			parser = PydanticOutputParser(
+				pydantic_object=json_schema_to_base_model(process_binary.args_schema.model_json_schema())
+			)
+			_, assistant_decision_pydantic = self.__ask_LLM(
+				"Do you think you resolved the initial question?",
+				parser=parser,
+			)
+			assistant_decision = assistant_decision_pydantic.yes_or_no.lower()
 
 		if 'no' in assistant_decision:
 			self.cnt_iter += 1
@@ -408,10 +430,10 @@ class MLXEngine():
 
 	# For saving final memory to the file.
 	def save_mem_to_file(self, file_path: str):
-		from src.tools import save_file
-		save_file(
-			file_path,
-			"\n".join([
-				f"[{m['role']}]\n{m['content']}\n"
-			for m in self.memory])
-		)
+		with open(file_path, "w+", encoding='utf-8') as f:
+			f.write(
+				"\n".join([
+					f"[{m['role']}]\n{m['content']}\n"
+				for m in self.memory])
+			)
+		print(f"File '{file_path}' has been saved.")

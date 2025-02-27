@@ -9,7 +9,7 @@ from mlx_lm import load, generate
 
 @tool(parse_docstring=True)
 def web_search(query: str) -> str:
-	"""Search web with query using DuckDuckGoSearch, to retrieve results found with query.
+	"""`web_search`: Search web with query using DuckDuckGoSearch, to retrieve results found with query.
 
 	Args:
 		query: Query to search for.

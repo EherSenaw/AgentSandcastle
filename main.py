@@ -3,8 +3,10 @@ from src.tools import (
 	save_file, read_file, list_files,
 	open_url_to_PIL_image,
 	DuckDuckGoSearchToolReturnImages,
+	web_search,
+	web_search_retrieve_images,
 )
-from src.together_engine import TogetherAPIEngine
+#from src.together_engine import TogetherAPIEngine
 from src.mlx_engine import MLXEngine
 
 import pprint
@@ -46,6 +48,7 @@ def main(args):
 	if args.llm_provider == 'huggingface':
 		llm_engine = HfApiEngine(model=args.llm_model_name)
 	elif args.togetherai_api_token != '' and args.llm_provider == 'togetherai':
+		'''
 		llm_engine = TogetherAPIEngine(
 			model=args.llm_model_name,
 			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
@@ -54,15 +57,19 @@ def main(args):
 			free_tier=True,
 			modality_io=args.llm_modality_io,
 		)
+		'''
+		pass
 	elif args.llm_provider == 'mlx':
 		# NOTE: Testing local llm engine for Apple Silicon.
 		llm_engine = MLXEngine(
 			model=args.llm_model_name,
-			tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
+			#tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
+			tools=[web_search, open_url_to_PIL_image],
 			max_iteration=5,
 			verbose=args.verbose,
 			modality_io=args.llm_modality_io,
 			max_new_tokens=args.max_new_tokens,
+			manual_answer_format=args.manual_answer_format,
 		)
 	else:
 		raise ValueError("Provide at least one LLM API provider.")

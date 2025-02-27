@@ -5,29 +5,32 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, create_model
 
+ANSWER_DICT_REGEXP = re.compile(r"\{[^\{\}]*\}")
 THINK_REGEXP = re.compile(r"<think>.*<\/think>", re.DOTALL)
 JSON_MARKDOWN_REGEXP = re.compile(r"```(json)?(.*)", re.DOTALL)
 JSON_STRIP_CHARS = " \n\r\t`"
 
-def retrieve_non_think(str_response: str) -> str:
+def retrieve_non_think(str_response: str, remove_think_only: bool = False) -> str:
+	# NOTE:	Default behavior of this function for `A<think>B</think>C` is returning C.
+	# 		Setting `remove_think_only` to True will return `A C`.
 	if '<think>' not in str_response:
 		return str_response
-	
+	retval = ''
 	n = len(str_response)
 	for candidate in THINK_REGEXP.finditer(str_response):
 		s, e = candidate.span()
-		# NOTE: Leave this 'left' extraction code sniffet for possible future use.
-		'''
-		if s > 0:
+		if remove_think_only and s > 0:
 			left = str_response[:s]
 		else:
 			left = ''
-		'''
-		
 		if e < n:
 			right = str_response[e:]
+			if remove_think_only:
+				retval = left + str_response[s+7:e-8] + right
+			else:
+				retval = right
 			break
-	return right.strip()
+	return retval.strip()
 
 # NOTE: JSON schema -> Pydantic BaseModel converter from stackoverflow
 # 		[LINK](https://stackoverflow.com/questions/73841072/dynamically-generating-pydantic-model-from-a-schema-json-file)

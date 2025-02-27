@@ -1,10 +1,14 @@
 LC_SYSTEM_PROMPT_TEMPLATE = """
 **GENERAL INSTRUCTIONS**
 You are a helpful assistant. Your task is to answer questions.
-Without tool calling, YOU ARE NOT CAPABLE OF INTERNET ACCESS. Do not act like yourself having internet access.
-
 If you cannot answer the question, request a helper or use a tool. Fill with Nil where no tool or no helper is required.
+You need to assume that your knowledge are not up-to-date without using results from web search tools. 
 Your maximum iteration should not exceed {max_iteration}.
+
+Please do not mislead the helpers as tools, they are different.
+- Tools are external functions with capabilities that LLM can not directly perform. 
+- Helpers are not tools. But are the indication of notions that can be used during processing.
+Observation after the use of the tools will be given, therefore, do not hallucinate that you already used it, if observation is not given.
 
 **AVAIALBLE MODALITIES**
 You are capable of processing following modalities in I/O.
