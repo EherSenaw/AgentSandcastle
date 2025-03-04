@@ -4,6 +4,7 @@ from src.tools import (
 	open_url_to_PIL_image,
 	web_search,
 	web_search_retrieve_images,
+	ask_user,
 )
 #from src.together_engine import TogetherAPIEngine
 from src.mlx_engine import MLXEngine
@@ -63,7 +64,7 @@ def main(args):
 		llm_engine = MLXEngine(
 			model=args.llm_model_name,
 			#tools=[DuckDuckGoSearchTool(), DuckDuckGoSearchToolReturnImages(), open_url_to_PIL_image],
-			tools=[web_search, open_url_to_PIL_image],
+			tools=[web_search, web_search_retrieve_images, ask_user],
 			max_iteration=5,
 			verbose=args.verbose,
 			modality_io=args.llm_modality_io,

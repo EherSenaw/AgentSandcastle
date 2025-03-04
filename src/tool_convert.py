@@ -4,6 +4,8 @@ from typing import Optional, Callable, Literal, Optional, Union, Any, get_type_h
 
 from pydantic import BaseModel, Field, create_model
 
+#TODO: Remove LangChain dependency & remove unnecessary part from the original code.
+#from src.lc_tool_base import BaseTool, Tool, StructuredTool
 from langchain_core.tools.base import BaseTool
 from langchain_core.tools.simple import Tool
 from langchain_core.tools.structured import StructuredTool

@@ -25,22 +25,6 @@ from mlx_vlm import (
 from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 from mlx_vlm.utils import load_config as vlm_load_config
 
-'''
-parser = PydanticOutputParser(pydantic_object=People)
-parse_chain_template = [
-	{
-		"role": "system",
-		"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
-			format_instructions=parser.get_format_instructions()
-		),
-	},
-	{
-		"role": "user",
-		"content": "{query}",
-	},
-]
-'''
-
 class MLXEngine():
 	def __init__(
 		self,
@@ -126,7 +110,7 @@ class MLXEngine():
 		if h_req:
 			# Initialize iterations for the given question.
 			self.plan_subtask(init=True)
-
+		
 		while self.continue_iteration():
 			if self.verbose:
 				print(f"Continue iteration.. ({self.cnt_iter} / {self.max_iter})")
@@ -179,7 +163,15 @@ class MLXEngine():
 		if self.USE_VLM:
 			try:
 				formatted_prompt = vlm_apply_chat_template(
-					self.processor, self.config, self.memory+[{
+					self.processor, self.config,
+					(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
+					([{
+						"role": "system",
+						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
+							format_instructions=parser.get_format_instructions()
+						)
+					}] if parser else []) + \
+					[{
 						"role": "user",
 						"content": question,
 					}], num_images=len(image_urls) 
@@ -188,62 +180,51 @@ class MLXEngine():
 				print(f"\n**ERROR**\nGot ValueError by trying to use Multi-image chat with the model not supported. Fall back to use first image only.\nOriginal error message -> {e}\n**ERROR**\n")
 				image_urls = [image_urls[0]]
 				formatted_prompt = vlm_apply_chat_template(
-					self.processor, self.config, self.memory+[{
+					self.processor, self.config,
+					(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
+					([{
+						"role": "system",
+						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
+							format_instructions=parser.get_format_instructions()
+						)
+					}] if parser else []) + \
+					[{
 						"role": "user",
 						"content": question,
 					}], num_images=len(image_urls) 
 				)
-			output = vlm_generate(self.client, self.processor, formatted_prompt, image_urls, verbose=self.verbose)
+			output = vlm_generate(self.client, self.processor, formatted_prompt, image_urls, verbose=self.verbose, max_tokens=self.max_new_tokens)
 		else:
-			if ignore_answer_format and self.validation_answer_format:
-				prompt = self.tokenizer.apply_chat_template(
-					self.memory[0:1] + \
-					(self.memory[2:] if len(self.memory)>2 else []) + \
-					([{
-						"role": "system",
-						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
-							format_instructions=parser.get_format_instructions()
-						)
-					}] if parser else []) + \
-					[{
-						"role": "user",
-						"content": question,
-					}],
-					add_generation_prompt=True,
-					tokenize=False if parser else True,
-				)
-			else:
-				prompt = self.tokenizer.apply_chat_template(
-					self.memory + \
-					([{
-						"role": "system",
-						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
-							format_instructions=parser.get_format_instructions()
-						)
-					}] if parser else []) + \
-					[{
-						"role": "user",
-						"content": question,
-					}],
-					add_generation_prompt=True,
-					tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
-				)
-			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
-			#output = self.__retrieve_non_think(output.strip(), minimal=minimal)
-			output = retrieve_non_think(output.strip(), remove_think_only=minimal)
-			# NOTE: structured output auto-parsing
-			if parser:
-				try:
-					parsed_output = parser.invoke(output)
-				except OutputParserException as e:
-					retry_parser = RetryOutputParser.from_llm(
-						parser=parser,
-						llm = (self.client, self.tokenizer),
-						prompt_template=NAIVE_COMPLETION_RETRY,
-						max_retries=self.max_iter,
+			prompt = self.tokenizer.apply_chat_template(
+				(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
+				([{
+					"role": "system",
+					"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
+						format_instructions=parser.get_format_instructions()
 					)
-					parsed_output = retry_parser.parse_with_prompt(output, prompt)
-				return output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
+				}] if parser else []) + \
+				[{
+					"role": "user",
+					"content": question,
+				}],
+				add_generation_prompt=True,
+				tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
+			)
+			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
+		output = retrieve_non_think(output.strip(), remove_think_only=minimal)
+		# NOTE: structured output auto-parsing
+		if parser:
+			try:
+				parsed_output = parser.invoke(output)
+			except OutputParserException as e:
+				retry_parser = RetryOutputParser.from_llm(
+					parser=parser,
+					llm = (self.client, self.tokenizer),
+					prompt_template=NAIVE_COMPLETION_RETRY,
+					max_retries=self.max_iter,
+				)
+				parsed_output = retry_parser.parse_with_prompt(output, prompt)
+			return output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
 		return output
 
 	def __retrieve_answer_dict(self, str_answer:str) -> Dict:
@@ -399,7 +380,7 @@ class MLXEngine():
 				pydantic_object=json_schema_to_base_model(process_binary.args_schema.model_json_schema())
 			)
 			_, assistant_decision_pydantic = self.__ask_LLM(
-				"Do you think you resolved the initial question?",
+				"Do you think you resolved the initial question? If you think so, answer 'Yes'. If not, answer 'No'.",
 				parser=parser,
 			)
 			assistant_decision = assistant_decision_pydantic.yes_or_no.lower()
@@ -415,10 +396,11 @@ class MLXEngine():
 
 	def plan_subtask(self, init=True):
 		if init:
-			llm_input = f"You are a domain expert. Based on the question I gave, plan the subtasks in order to answer the given question."
+			#llm_input = f"You are a domain expert. Based on the question I gave, plan the subtasks in order to answer the given question."
+			llm_input = f"Plan the subtasks in order to answer the given question, be aware to use the tools or helpers if needed."
 		else:
-			llm_input = f"Evaluate the task progress so far. If needed, refine the sub-tasks to solve current problem."
-		assistant_plan = self.__ask_LLM(llm_input)
+			llm_input = f"Evaluate the task progress so far. If needed, refine the sub-tasks to solve current problem. Be aware to use the tools or helpers if needed."
+		assistant_plan = self.__ask_LLM(llm_input, ignore_answer_format=True)
 		self.memorize(llm_input, assistant_plan)
 
 	# For final answer.

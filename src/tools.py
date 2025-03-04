@@ -130,6 +130,19 @@ def web_search(query: Optional[str]) -> str:
 	search_result_str = "\n\n".join([f"TITLE: {res['title']}\n{res['body']}" for res in results])
 	return search_result_str
 
+@tool(parse_docstring=True)
+def ask_user(query: Optional[str]) -> str:
+	"""Ask user a query(information required for further processing).
+	
+	Args:
+		query: Question to ask.
+	
+	Returns:
+		The string format respond of the user.
+	"""
+	user_response = input(f"Ready for the user input for the question: `{query}`...")
+	return user_response
+
 ########### DUMMY TOOLS ##############
 # !IMPORTANT! These (dummy tools) are not used as tool, but used for easy structuring of output.
 ######################################
