@@ -602,18 +602,25 @@ class RetryOutputParser(BaseOutputParser[T]):
 		"""
 		return cls(parser=parser, llm=llm, prompt_template=prompt_template, max_retries=max_retries)
 	
-	def parse_with_prompt(self, llm_output:str, prompt_value: str) -> T:
+	def parse_with_prompt(self, llm_output:str, prompt_value: str, llm_provider: str = 'mlx', sampling_params: Optional[str] = None) -> T:
 		"""Parse the output of an LLM call using a wrapper parser.
 
 		Args:
 			llm_output: The LLM output to parse.
 			prompt_value: The prompt to use to parse the LLM output.
+			llm_provider: To use proper `generate` code snippet for each provider.
+			sampling_params: Only needed for `vllm` provider.
 		
 		Returns:
 			The parsed output.
 		"""
 		retries = 0
-		from mlx_lm import generate
+		if llm_provider == 'mlx':
+			from mlx_lm import generate
+		elif llm_provider == 'vllm':
+			assert sampling_params, 'RetryOutputParser.parse_with_prompt() requires `sampling_params` for `llm_provider=vllm`.'
+		else:
+			raise NotImplementedError('Currently RetryOutputParser not implemented with llm providers other than \{`mlx`,`vllm`\}. ')
 
 		while retries <= self.max_retries:
 			try:
@@ -624,13 +631,21 @@ class RetryOutputParser(BaseOutputParser[T]):
 				else:
 					retries += 1
 					print(f"Retry with:\n{self.prompt_template.format(prompt=prompt_value,completion=llm_output)}\n")
-					llm_output = generate(
-						self.llm[0], # llm
-						self.llm[1], # tokenizer
-						prompt=self.prompt_template.format(prompt=prompt_value,completion=llm_output),
-						verbose=True,
-						max_tokens=1024,
-					)
+					if llm_provider == 'mlx':
+						llm_output = generate(
+							self.llm[0], # llm
+							self.llm[1], # tokenizer
+							prompt=self.prompt_template.format(prompt=prompt_value,completion=llm_output),
+							verbose=True,
+							max_tokens=1024,
+						)
+					elif llm_provider == 'vllm':
+						prompt = self.llm.get_tokenizer().apply_chat_template(
+							self.prompt_template.format(prompt=prompt_value,completion=llm_output),
+							add_generation_prompt=True,
+							tokenize=False,
+						)
+						llm_output = self.llm.generate(prompt, sampling_params=sampling_params, use_tqdm=False)[0].outputs[0].text.strip()
 					if llm_output:
 						llm_output = retrieve_non_think(llm_output)
 		
