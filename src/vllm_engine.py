@@ -16,6 +16,7 @@ from src.exceptions import OutputParserException
 
 from pydantic import BaseModel, Field
 
+'''
 from mlx_lm import load, generate
 
 from mlx_vlm import (
@@ -24,14 +25,19 @@ from mlx_vlm import (
 )
 from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 from mlx_vlm.utils import load_config as vlm_load_config
+'''
+import torch
+from transformers import AutoTokenizer
+from vllm import LLM, SamplingParams
+from vllm.distributed import cleanup_dist_env_and_memory
 
-class MLXEngine():
+class vLLMEngine():
 	def __init__(
 		self,
-		model : str = 'mlx-community/DeepScaleR-1.5B-Preview-4bit',
+		model : str = 'unsloth/DeepSeek-R1-Distill-Qwen-1.5B-bnb-4bit',
 		max_iteration : int = 5,
 		verbose : bool = False,
-		tools : List[Optional[Any]] = [], #List[Optional[Tool]] = [],
+		tools : List[Optional[Any]] = [],
 		modality_io : str = 'text/text',
 		max_new_tokens : int = 1024,
 		manual_answer_format : Optional[str] = '', # To denote Legacy-style `prompt-level` forcing of structured output.
@@ -40,8 +46,6 @@ class MLXEngine():
 		self.max_iter = max_iteration
 		self.verbose = verbose
 
-		#self.tools = verify_hf_tools(tools)
-		#self.tools = verify_tools_docstring(tools)
 		self.tools = dict()
 		for t in tools:
 			# NOTE: Now using LangChain-style @tool decorator, which parses the tool's Google-style docstring automatically.
@@ -65,10 +69,27 @@ class MLXEngine():
 		# Flag for VLM usage.
 		self.USE_VLM = True if len(self.modality_in) > 1 else False
 		if self.USE_VLM:
-			self.client, self.processor = vlm_load(self.model)
-			self.config = vlm_load_config(self.model)
+			# NOTE: Not tested for vLLM usage, yet.
+			raise NotImplementedError("Currently, Multi-modal usage with vLLM not tested.")
 		else:
-			self.client, self.tokenizer = load(self.model)
+			self.client = LLM(
+				model=self.model,
+				gpu_memory_utilization=0.9, # NOTE: Change depending on the use-cases.
+				cpu_offload_gb=4, 			# NOTE: Only use if GPU's RAM is not sufficient for the use-case. Trade-offs latency. Unit: GiB.
+											# 		If not needed, comment out `cpu_offload_gb=...,`, since it makes system slow.
+				#dtype='auto',
+				#dtype='half', 				# NOTE: if your environment(GPU, ...) supports bfloat16, try that one.
+				#kv_cache_dtype='fp8', 		# NOTE: If error occurs, comment out this and comment out `calculate_kv_scales=True`
+				#calculate_kv_scales=True,
+				#quantization='AWQ',
+				#quantization='bitsandbytes',# bnb not supported for my hardware...
+				#load_format='bitsandbytes', # bnb not supported for my hardware...
+				trust_remote_code=True,
+				#enable_chunked_prefill=True,
+				max_model_len=max_new_tokens*4, # NOTE: Change the value for each use-cases.
+				enforce_eager=True, 		# NOTE: To use bnb in vLLM, currently need this argument.
+			)
+			self.sampling_params = SamplingParams(max_tokens=max_new_tokens, temperature=0.5)
 
 		# LLM engine system prompt setup.
 		self.validation_prompt = LC_SYSTEM_PROMPT_TEMPLATE
@@ -87,11 +108,9 @@ class MLXEngine():
 				max_iteration=self.max_iter,
 				modality_in=self.modality_in,
 				modality_out=self.modality_out,
-				# NOTE: Legacy tool description for testing the availablity of using prompt instructions only to force the structured output.
-				#tool_list='\n'.join(f"- {t_name}: {tool.description}\n\tArgs: {tool.inputs}\n\tReturns: {tool.output_type}" for t_name,tool in self.tools.items()),
 				tool_list='\n'.join(f"- {t_name}: {tool.description}" for t_name,tool in self.tools.items()),
 				#max_new_tokens=self.max_new_tokens,
-		)#+'\n'+self.validation_answer_format})
+			)
 		})
 		if self.validation_answer_format:
 			# NOTE: Separate answer format from the body. This is for further INTENDED IGNORE of answer format.
@@ -161,41 +180,10 @@ class MLXEngine():
 
 		# NOTE: VLM not tested since beginning of tool execution implementation.
 		if self.USE_VLM:
-			try:
-				formatted_prompt = vlm_apply_chat_template(
-					self.processor, self.config,
-					(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
-					([{
-						"role": "system",
-						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
-							format_instructions=parser.get_format_instructions()
-						)
-					}] if parser else []) + \
-					[{
-						"role": "user",
-						"content": question,
-					}], num_images=len(image_urls) 
-				)
-			except ValueError as e:
-				print(f"\n**ERROR**\nGot ValueError by trying to use Multi-image chat with the model not supported. Fall back to use first image only.\nOriginal error message -> {e}\n**ERROR**\n")
-				image_urls = [image_urls[0]]
-				formatted_prompt = vlm_apply_chat_template(
-					self.processor, self.config,
-					(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
-					([{
-						"role": "system",
-						"content": "Answer the user query. Wrap the output in `json` tags\n{format_instructions}".format(
-							format_instructions=parser.get_format_instructions()
-						)
-					}] if parser else []) + \
-					[{
-						"role": "user",
-						"content": question,
-					}], num_images=len(image_urls) 
-				)
-			output = vlm_generate(self.client, self.processor, formatted_prompt, image_urls, verbose=self.verbose, max_tokens=self.max_new_tokens)
+			raise NotImplementedError("Currently, using Multi-modal model with vLLM is not tested.")
 		else:
-			prompt = self.tokenizer.apply_chat_template(
+			#prompt = self.tokenizer.apply_chat_template(
+			prompt = self.client.get_tokenizer().apply_chat_template(
 				(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
 				([{
 					"role": "system",
@@ -208,10 +196,22 @@ class MLXEngine():
 					"content": question,
 				}],
 				add_generation_prompt=True,
-				tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
-			)
-			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
-		output = retrieve_non_think(output.strip(), remove_think_only=minimal)
+				#tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
+				tokenize=False,
+			) 
+			#output = self.client.chat(
+			output = self.client.generate(
+				prompt,
+				sampling_params=self.sampling_params,
+				use_tqdm=False,
+				#tools=[], # NOTE: Unlike normal vLLM usage, we do not use explicit `tools` argument of vLLM.
+				#				But implemented tool chaining with other parts in the agent.
+				#				This enable the LLMs whom are not trained to use tools to use the tools in the inference.
+			)[0].outputs[0].text.strip()
+			if self.verbose:
+				print(f"**[__ask_LLM raw output]**\n{output}\n")
+			#output = output[0].outputs[0].text.strip()
+		output = retrieve_non_think(output, remove_think_only=minimal)
 		# NOTE: structured output auto-parsing
 		if parser:
 			try:
@@ -219,11 +219,11 @@ class MLXEngine():
 			except OutputParserException as e:
 				retry_parser = RetryOutputParser.from_llm(
 					parser=parser,
-					llm = (self.client, self.tokenizer),
+					llm=self.client, # NOTE: different from `mlx` version.
 					prompt_template=NAIVE_COMPLETION_RETRY,
 					max_retries=self.max_iter,
 				)
-				parsed_output = retry_parser.parse_with_prompt(output, prompt)
+				parsed_output = retry_parser.parse_with_prompt(output, prompt, llm_provider='vllm', sampling_params=self.sampling_params)
 			return output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
 		return output
 
@@ -255,7 +255,7 @@ class MLXEngine():
 			str_answer, answer_dict = self.__ask_LLM(llm_input, parser=parser)
 		
 		if isinstance(answer_dict, dict):
-			#raise ValueError(f"Legacy style returned. Check MLXEngine().check_request().")
+			#raise ValueError(f"Legacy style returned. Check vLLMEngine().check_request().")
 			t_req, h_req, ans, res = None, None, None, None
 			if "Tool_Request" in answer_dict:
 				t_req = answer_dict["Tool_Request"]
@@ -277,13 +277,13 @@ class MLXEngine():
 					res = None
 		else:
 			t_req = answer_dict.tool_request
-			if t_req.lower() == 'nil': t_req = None
+			if t_req.lower() in {'nil', 'none', ''}: t_req = None
 			h_req = answer_dict.helper_request
-			if h_req.lower() == 'nil': h_req = None
+			if h_req.lower() in {'nil', 'none', ''}: h_req = None
 			ans = answer_dict.answer
-			if ans.lower() == 'nil': ans = None
+			if ans.lower() in {'nil', 'none', ''}: ans = None
 			res = answer_dict.rationale
-			if res.lower() == 'nil': res = None
+			if res.lower() in {'nil', 'none', ''}: res = None
 
 		# Save result to memory.
 		self.memorize(llm_input, str_answer)

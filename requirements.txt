@@ -1,0 +1,8 @@
+mlx
+mlx-lm
+mlx-vlm
+langchain
+transformers
+accelerate
+pydantic
+jsonschema

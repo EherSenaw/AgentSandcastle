@@ -12,15 +12,30 @@ def build_args():
 		type=str, default='',
 		help='TogetherAI API Token.'
 	)
+
 	parser.add_argument('--llm_provider',
 		type=str, default='huggingface',
 		help='Choose LLM engine API provider (or Local use with \'mlx\') to use. {\'huggingface\', \'togetherai\', \'mlx\'}. Default: \'huggingface\'. ')
+
 	parser.add_argument('--llm_model_name',
 		type=str, default='meta-llama/Llama-3-70B-Instruct'
 	)
 	parser.add_argument('--llm_modality_io',
 		type=str, default='text/text',
 		help='Provide dedicated I/O modality types for the LLM engine. Provide with following format: `Input1,Input2,.../Output1,Output2,...`. Default: text/text '
+	)
+	parser.add_argument('--max_new_tokens',
+		type=int, default=256,
+		help='MAXIMUM number of tokens to generate, per each LLM call. Default: 256.')
+
+	parser.add_argument('--verbose',
+		action='store_true',
+		help='Set default \'verbose\' behaviors.'
+	)
+
+	parser.add_argument('--manual_answer_format',
+		type=str, default='',
+		help='If you want to instruct the agent to answer with your own format manually, provide instruction here. This possibly will disable the auto-parsing & calling of the tool of LLM.'
 	)
 
 	parser.add_argument('--initial_question',
