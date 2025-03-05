@@ -53,8 +53,9 @@ First, clone this repository.
 
 ## Roadmap
 * Proof of Concept: Launch the initial PoC with minimal optimization considerations.
-  * NOW(branch `structured_output`): (MAC) Local Single-agent with single-(m)LLM-engine tested. Test on-going for the integration of tool calling by auto-parsing and structured output control.
-  *       (Non-MAC) Local Single-agent with single-(m)LLM-engine tested.
+  * (MAC) Tested: Local Single-agent with single-(m)LLM-engine + Integration of tool calling by auto-parsing and structured output control.
+  * (Non-MAC) Tested: Local Single-agent with single-(m)LLM-engine + Integration of tool calling by auto-parsing and structured output control.
+  * Next things: Multi-turn chat, multi-agent, multi-modal, ...
 * Optimization Iterations: Gradually integrate and test various ML/MLOps optimization techniques.
 * Community Contributions: Encourage community-driven enhancements and experiments to further refine the framework.
 
