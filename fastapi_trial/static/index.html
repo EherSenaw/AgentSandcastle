@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ASC: Local Agent Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f5f7fa;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100vh;
+    }
+
+    h2 {
+      margin: 1rem 0;
+      color: #333;
+    }
+
+    #chat-box {
+      width: 90%;
+      max-width: 700px;
+      height: 65vh;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.05);
+      padding: 1rem;
+      overflow-y: auto;
+      margin-bottom: 1rem;
+    }
+
+    .message {
+      margin-bottom: 0.8rem;
+    }
+
+    .user {
+      color: #0d6efd;
+    }
+
+    .bot {
+      color: #198754;
+    }
+
+    .chat-input {
+      display: flex;
+      width: 90%;
+      max-width: 700px;
+      gap: 0.5rem;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 0.7rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+
+    button {
+      padding: 0.7rem 1.2rem;
+      background: #0d6efd;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0b5ed7;
+    }
+
+    @media (max-width: 500px) {
+      h2 { font-size: 1.25rem; }
+      input, button { font-size: 0.9rem; }
+    }
+  </style>
+</head>
+<body>
+  <h2>💬 AS: Local Agent Chat</h2>
+  <div id="chat-box"></div>
+  <div class="chat-input">
+    <input type="text" id="user-input" placeholder="Type your message..." />
+    <button id="send-button">Send</button>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

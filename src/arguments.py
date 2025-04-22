@@ -1,7 +1,8 @@
 import argparse
 import os
+from typing import Optional, Dict
 
-def build_args():
+def build_args(default_args: Optional[Dict]):
 	# Build argument parser and parse arguments.
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--hf_api_token',
@@ -43,7 +44,15 @@ def build_args():
 		help='Initial question that should be asked to the Agent.'
 	)
 
-	args = parser.parse_args()
+	if default_args:
+		d_args = []
+		for k, v in default_args.items():
+			d_args.append('--'+k)
+			if v not in {True, False}:
+				d_args.append(str(v))
+		args = parser.parse_args(d_args)
+	else:
+		args = parser.parse_args()
 	assert not (args.hf_api_token == '' and args.togetherai_api_token == '' and args.llm_provider in {'togetherai', 'huggingface'}), "One of the LLM provider API token should be given."
 	if args.togetherai_api_token != '':
 		os.environ['TOGETHER_API_KEY'] = args.togetherai_api_token
