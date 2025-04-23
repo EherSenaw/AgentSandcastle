@@ -22,7 +22,7 @@ def builder(args):
 	llm_engine = engine_class(
 		model=args.llm_model_name,
 		tools=[web_search, ask_user],
-		max_iteration=5,
+		max_iteration=3,
 		verbose=args.verbose,
 		modality_io=args.llm_modality_io,
 		max_new_tokens=args.max_new_tokens,

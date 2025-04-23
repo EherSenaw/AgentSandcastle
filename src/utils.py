@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field, create_model
 
 ANSWER_DICT_REGEXP = re.compile(r"\{[^\{\}]*\}")
 THINK_REGEXP = re.compile(r"<think>.*<\/think>", re.DOTALL)
-JSON_MARKDOWN_REGEXP = re.compile(r"```(json)?(.*)", re.DOTALL)
-JSON_STRIP_CHARS = " \n\r\t`"
+#JSON_MARKDOWN_REGEXP = re.compile(r"(```)*(json)?(.*)", re.DOTALL)
+JSON_MARKDOWN_REGEXP = re.compile(r"```\w*(json)*(?:\w+)?\s*\n(.*?)(?=^```)```", re.DOTALL | re.MULTILINE)
+#JSON_STRIP_CHARS = " \n\r\t`"
+JSON_STRIP_CHARS = " \n\r\t"
 
 def retrieve_non_think(str_response: str, remove_think_only: bool = False) -> str:
 	# NOTE:	Default behavior of this function for `A<think>B</think>C` is returning C.

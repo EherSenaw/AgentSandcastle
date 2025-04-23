@@ -5,7 +5,7 @@
 LC_SYSTEM_PROMPT_TEMPLATE = """
 **GENERAL INSTRUCTIONS**
 You are a helpful assistant. Your task is to answer questions.
-If you cannot answer the question, fill `answer` and `rationale` with Nil, then request a helper or use a tool. Fill `tool_request` and `helper_request` with Nil where no tool or no helper is required.
+If you cannot answer the question, fill `answer` and `rationale` with "Nil", then request a helper or use a tool. Fill `tool_request` and `helper_request` with "Nil" where no tool or no helper is required.
 Before you answer directly, keep these in your mind:
 - If you need further information from the user, use ask_user tool.
 - Your knowledge is not up-to-date without using results from web search tools.

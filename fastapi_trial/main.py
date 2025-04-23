@@ -97,14 +97,17 @@ def load_engine_once():
 		raise ValueError("Check model config.")
 	app.state.llm_engine = build_engine(model_config['model_args'])
 def delete_engine():
-	del app.state.llm_engine
-	app.state.llm_engine = None
+	try:
+		app.state.llm_engine.shutdown()
+	finally:
+		del app.state.llm_engine
+		app.state.llm_engine = None
 
 @app.post("/chat")
 async def chat(message: Message):
 	user_text = message.user_input
 	# Call your local LLM Agent.
-	agent_reply = app.state.llm_engine(user_text)
+	agent_reply = app.state.llm_engine(user_text, volatile=False)
 	return JSONResponse(content={"response": agent_reply})
 @app.get("/", response_class=HTMLResponse)
 async def get():

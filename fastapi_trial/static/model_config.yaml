@@ -1,6 +1,6 @@
 model_args:
   llm_provider: "mlx"
-  llm_model_name: "mlx-community/Qwen2.5-7B-Instruct-1M-4bit"
+  llm_model_name: "mlx-community/EXAONE-3.5-7.8B-Instruct-4bit"
   llm_modality_io: "text/text"
   max_new_tokens: 1024
   manual_answer_format: ""
