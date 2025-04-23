@@ -4,5 +4,6 @@ mlx-vlm
 langchain
 transformers
 accelerate
+fastapi[standard]
 pydantic
 jsonschema

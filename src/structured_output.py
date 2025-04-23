@@ -151,11 +151,15 @@ def parse_json_markdown(
 		return _parse_json(json_string, parser=parser)
 	except json.JSONDecodeError:
 		# Try to find JSON string within triple backticks
-		match = JSON_MARKDOWN_REGEXP.search(json_string)
+		#match = JSON_MARKDOWN_REGEXP.search(json_string)
+		match = JSON_MARKDOWN_REGEXP.findall(json_string)
+		if match:
+			match = match[0]
 
 		# If no match found, assume the entire string is a JSON string
 		# Else, use the content within the backticks
-		json_str = json_string if match is None else match.group(2)
+		#json_str = json_string if match is None else match.group(2)
+		json_str = json_string if match is None else match[-1]
 	return _parse_json(json_str, parser=parser)
 
 def validate_json_schema(schema: Dict[str, Any]) -> None:
