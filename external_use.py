@@ -1,11 +1,37 @@
 # NOTE: To use with chat-bot-like FastAPI endpoint.
-from typing import Optional, Any
+from typing import Optional, Any, TypeVar, Callable, AsyncGenerator
+import functools
 
 from src.arguments import build_args
 from src.tools import (
 	web_search,
 	ask_user,
 )
+
+### Helper for async streaming <-> final output separation handling.
+T = TypeVar("T")
+def with_final(gen_func: Callable[..., AsyncGenerator[T, None]]
+) -> Callable[..., AsyncGenerator[tuple[T, bool], None]]:
+	"""
+	Wrap an async-generator that yields chunks of type T into one
+	that yields (chunk, is_final_flag), and then one final (full, True).
+	"""
+	@functools.wraps(gen_func)
+	async def wrapper(*args, **kwargs) -> AsyncGenerator[tuple[T, bool], None]:
+		it = gen_func(*args, **kwargs).__aiter__()
+		try:
+			prev = await it.__anext__() # Get first item (or fail)
+		except StopAsyncIteration:
+			return						# No items at all
+		while True:
+			try:
+				curr = await it.__anext__()
+				yield prev, False # intermediate chunk
+				prev = curr
+			except StopAsyncIteration:
+				yield prev, True
+				break
+	return wrapper
 
 def builder(args):
 	engine_class = None
