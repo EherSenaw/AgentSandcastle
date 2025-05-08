@@ -1,4 +1,5 @@
 import time, re, os
+import asyncio
 from typing import List, Optional, Dict, Any
 
 from src.tools import process_request, process_binary, save_file
@@ -16,7 +17,7 @@ from src.exceptions import OutputParserException
 
 from pydantic import BaseModel, Field
 
-from mlx_lm import load, generate
+from mlx_lm import load, generate, stream_generate
 
 from mlx_vlm import (
 	load as vlm_load,
@@ -24,6 +25,8 @@ from mlx_vlm import (
 )
 from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 from mlx_vlm.utils import load_config as vlm_load_config
+
+from external_use import with_final
 
 class MLXEngine():
 	def __init__(
@@ -150,6 +153,92 @@ class MLXEngine():
 		self.manage_resource(volatile=volatile)
 
 		return final_answer
+
+	@with_final
+	async def stream_call(self, question: str = '', volatile=False):
+		'''Async version of __call__() method.'''
+
+		# Check if any TOOLs or HELPs needed.
+		t_req, h_req, ans, res = '', '', '', ''
+		async for (token, is_final) in self.check_request_async(
+			question,
+			init=True if volatile else False,
+		):
+			if not is_final:
+				yield ("thought_intermediate", token)
+				#await asyncio.sleep(0)
+			else:
+				t_req, h_req, ans, res = token
+				yield ("thought_answer", ans)
+		await asyncio.sleep(0)
+		
+		####### SYNC VERSION #######
+		# If tool is needed, use tool.
+		if t_req:
+			self.use_tool(t_req)
+		# If helper is needed, use helper.
+		if h_req:
+			# Initialize iterations for the given question.
+			self.plan_subtask(init=True)
+		####### SYNC VERSION #######
+
+		while self.continue_iteration(volatile=volatile):
+			# Decide action.
+			llm_input_action = "Based on the context, decide the next action for you to solve the problem."
+			t_req_action, h_req_action, ans_action, res_action = None, None, None, None
+
+			async for (token, is_final) in self.check_request_async(llm_input_action):
+				if not is_final:
+					yield ("thought_intermediate", token)
+					#await asyncio.sleep(0)
+				else:
+					t_req_action, h_req_action, ans_action, res_action = token
+					yield ("thought_answer", ans_action)
+
+			##### SYNC VERSION #####
+			if not (t_req_action or h_req_action):
+				if ans_action is None:
+					continue
+				llm_input_observation = f"Do: {ans_action}"
+			else:
+				if t_req_action:
+					self.use_tool(t_req_action)
+				if h_req_action:
+					self.plan_subtask(init=False)
+				llm_input_observation = f"Finished tool-using and help-requesting of current action. Do rest part within this action({ans_action})"
+			##### SYNC VERSION #####
+
+			# Do action and retrieve observation.
+			observation = None
+			async for (token, is_final) in self.__ask_LLM_async(llm_input_observation, self_querying=True):
+				if not is_final:
+					yield ("thought_intermediate", token)
+					#await asyncio.sleep(0)
+				else:
+					observation = token
+					yield ("thought_answer", observation)
+			# Store to memory.
+			self.memorize(llm_input_observation, observation, self_querying=True)
+
+		# Get final answer.
+		final_answer = None
+		async for (token, is_final) in self.finalize_async():
+			if not is_final:
+				yield ("final_intermediate", token)
+			else:
+				final_answer = token
+				yield ("final_answer", final_answer)
+
+		######### SYNC VERSION ########
+		# Save the memory to the text file by LLM.
+		self.save_mem_to_file(
+			os.path.join(os.getcwd(), 'temp_mlx.log')
+		)
+		# Clean up resources.
+		self.manage_resource(volatile=volatile)
+		######### SYNC VERSION ########
+
+		#yield final_answer
 	
 	def __ask_LLM(
 		self,
@@ -216,7 +305,15 @@ class MLXEngine():
 				add_generation_prompt=True,
 				tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
 			)
-			output = generate(self.client, self.tokenizer, prompt=prompt, verbose=self.verbose, max_tokens=self.max_new_tokens)
+			output = generate(
+				self.client,
+				self.tokenizer,
+				prompt=prompt,
+				verbose=self.verbose,
+				max_tokens=self.max_new_tokens,
+				## NOTE: kwargs for `generate_step()`
+				kv_bits=4, # KV cache quantization bits
+			)
 		output = retrieve_non_think(output.strip(), remove_think_only=minimal)
 		# NOTE: structured output auto-parsing
 		if parser:
@@ -232,6 +329,72 @@ class MLXEngine():
 				parsed_output = retry_parser.parse_with_prompt(output, prompt)
 			return output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
 		return output
+	
+	@with_final
+	async def __ask_LLM_async(
+		self,
+		question : str = '',
+		image_urls : Optional[List[str]] = None,
+		minimal : Optional[bool] = False,
+		ignore_answer_format : Optional[bool] = False,
+		parser: Optional[PydanticOutputParser] = None, # NOTE: Provide parser to use auto-parsing structured output for tools generated with @tool decorator.
+		self_querying: Optional[bool] = False,
+	):
+		#### SYNC VERSION ####
+		if image_urls is None:
+			image_urls = []
+		u_id = "user" if not self_querying else "assistant"
+		prompt = self.tokenizer.apply_chat_template(
+			(self.memory[0:1] + (self.memory[2:] if len(self.memory)>2 else []) if ignore_answer_format and self.validation_answer_format else self.memory) + \
+			([{
+				"role": "system",
+				"content": "Answer the {user} query. Wrap the output in `json` tags\n{format_instructions}".format(
+					user=u_id,
+					format_instructions=parser.get_format_instructions()
+				)
+			}] if parser else []) + \
+			[{
+				"role": "user" if not self_querying else "assistant",
+				"content": question,
+			}],
+			add_generation_prompt=True,
+			tokenize=False if parser else True, # NOTE: In the sturctured output parsing for tool-calling use-case, set tokenize=False.
+		)
+		#### SYNC VERSION ####
+
+		output = ''
+		for response in stream_generate(
+			self.client,
+			self.tokenizer,
+			prompt=prompt,
+			max_tokens=self.max_new_tokens,
+			## NOTE: kwargs for `generate_step()`
+			kv_bits=4, # KV cache quantization bits
+		):
+			token = response.text
+			yield token
+			await asyncio.sleep(0)
+			output += token
+
+		#### SYNC VERSION ####
+		output = retrieve_non_think(output.strip(), remove_think_only=minimal)
+		# NOTE: structured output auto-parsing
+		if parser:
+			try:
+				parsed_output = parser.invoke(output)
+			except OutputParserException as e:
+				retry_parser = RetryOutputParser.from_llm(
+					parser=parser,
+					llm = (self.client, self.tokenizer),
+					prompt_template=NAIVE_COMPLETION_RETRY,
+					max_retries=self.max_iter,
+				)
+				parsed_output = retry_parser.parse_with_prompt(output, prompt)
+			yield output, parsed_output #NOTE: return string-type output also, to be used in 'memorize'.
+		#### SYNC VERSION ####
+		else:
+			yield output
+
 
 	def __retrieve_answer_dict(self, str_answer:str) -> Dict:
 		ans_dict_list = []
@@ -296,6 +459,73 @@ class MLXEngine():
 		self.memorize(llm_input, str_answer)
 		# Return tools and help requests.
 		return t_req, h_req, ans, res
+	
+	@with_final
+	async def check_request_async(self, question='', init=False):
+		# 1. Check question and what things are needed.
+		llm_input = f"**QUESTION**\n{question}"
+
+		if self.validation_answer_format:
+			str_answer = None
+			async for (token, is_final) in self.__ask_LLM_async(llm_input):
+				if not is_final:
+					yield token
+					#await asyncio.sleep(0)
+				else:
+					str_answer = token
+			if str_answer is None:
+				str_answer = token
+			answer_dict = self.__retrieve_answer_dict(str_answer)
+		else:
+			parser = PydanticOutputParser(pydantic_object=json_schema_to_base_model(process_request.args_schema.model_json_schema()))
+			# NOTE: parsing conducted inside of `__ask_LLM` function.
+			str_answer, answer_dict = None, None
+			async for (token, is_final) in self.__ask_LLM_async(llm_input, parser=parser):
+				if not is_final:
+					yield token
+					#await asyncio.sleep(0)
+				else:
+					str_answer, answer_dict = token
+			if str_answer is None:
+				str_answer, answer_dict = token, {}
+		
+		invalid_set = {"nil", "none"}
+		if isinstance(answer_dict, dict):
+			#raise ValueError(f"Legacy style returned. Check MLXEngine().check_request().")
+			t_req, h_req, ans, res = None, None, None, None
+			if "Tool_Request" in answer_dict:
+				t_req = answer_dict["Tool_Request"]
+				if t_req.lower() in invalid_set: 
+					t_req = None
+			if "Helper_Request" in answer_dict:
+				h_req = answer_dict["Helper_Request"]
+				if h_req.lower() in invalid_set: 
+					h_req = None
+			if "Answer" in answer_dict:
+				ans = answer_dict["Answer"]
+				if ans.lower() in invalid_set: 
+					ans = None
+			else:
+				ans = str_answer
+			if "Rationale" in answer_dict:
+				res = answer_dict["Rationale"]
+				if res.lower() in invalid_set: 
+					res = None
+		else:
+			t_req = answer_dict.tool_request
+			if t_req.lower() in invalid_set: t_req = None
+			h_req = answer_dict.helper_request
+			if h_req.lower() in invalid_set: h_req = None
+			ans = answer_dict.answer
+			if ans.lower() in invalid_set: ans = None
+			res = answer_dict.rationale
+			if res.lower() in invalid_set: res = None
+
+		# Save result to memory.
+		self.memorize(llm_input, str_answer)
+		# Return tools and help requests.
+		yield t_req, h_req, ans, res
+
 	
 	def use_tool(self, t_req: str):
 		# Do pattern matching for tool calling request.
@@ -423,6 +653,23 @@ class MLXEngine():
 		final_response = self.__ask_LLM(llm_input, minimal=False, self_querying=True)
 		self.memorize(llm_input, final_response, self_querying=True)
 		return final_response
+	@with_final
+	async def finalize_async(self):
+		llm_input = "Using the context, finalize thinking and generate answer. You must ignore **Answer Format** given earlier and just respond normally but concise, without exposing any details of thinking process."
+		final_response = ''
+		async for (token, is_final) in self.__ask_LLM_async(llm_input, minimal=False, self_querying=True):
+			if not is_final:
+				yield token
+				await asyncio.sleep(0)
+				#final_response += token
+			else:
+				final_response = token
+		if final_response is None:
+			final_response = token
+		
+		self.memorize(llm_input, final_response, self_querying=True)
+		yield final_response
+
 
 	# For saving final memory to the file.
 	def save_mem_to_file(self, file_path: str):

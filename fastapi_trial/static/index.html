@@ -56,6 +56,35 @@
       gap: 0.5rem;
     }
 
+    .thought {
+      font-style: italic;
+      color: #6c757d;
+      margin: 0.5rem 1rem;
+    }
+
+    .answer {
+      color: #198754;
+      margin: 1rem;
+      padding: 0.8rem;
+      background: #e9f7ef;
+      border-radius: 6px;
+    }
+    
+    .final {
+      background: #e9f7ef;
+      color: #198754;
+      margin-top: 0.5rem;
+      padding: 0.8rem;
+      border-radius: 6px;
+      /* ensure it wraps and shows line breaks: */
+      white-space: pre-wrap;
+    }
+    .final-pre {
+      margin: 0;            /* remove default <pre> margins */
+      white-space: pre-wrap;/* wrap long lines */
+      font-family: inherit; /* match chat font */
+    }
+
     input[type="text"] {
       flex: 1;
       padding: 0.7rem;
@@ -87,6 +116,8 @@
 <body>
   <h2>💬 ASC: Local Agent Chat</h2>
   <div id="chat-box"></div>
+  <!-- container for intermediate thoughts -->
+  <div id="thought-box"></div>
   <div class="chat-input">
     <input type="text" id="user-input" placeholder="Type your message..." />
     <button id="send-button">Send</button>

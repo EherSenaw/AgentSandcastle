@@ -155,6 +155,8 @@ def parse_json_markdown(
 		match = JSON_MARKDOWN_REGEXP.findall(json_string)
 		if match:
 			match = match[0]
+		if len(match) == 0:
+			match = None
 
 		# If no match found, assume the entire string is a JSON string
 		# Else, use the content within the backticks

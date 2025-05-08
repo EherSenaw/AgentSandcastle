@@ -58,18 +58,21 @@ pip install -r requirements.txt
 - [x] Add FastAPI-based web interface
 > 
 ### Short-term (1-2 weeks)
-- [ ] Streaming text output
-- [ ] KV cache
-- [ ] Prompt cache
-- [ ] Speculative decoding
+- [x] Streaming text output (with asyncio)
+- [x] Display inner workings (thoughts) on Web Interface with streams.
+- [ ] Add graph-like state control over ReAct agent architecture.
+- [ ] PyTorch native LLM engine build (and/or backend customization (MPS & CUDA) )
+- [ ] KV cache (on own engine)
+- [ ] Implement own async scheduler.
+- [ ] Continuous batching (with asyncio)
+- [ ] Speculative decoding (on own engine)
 > 
 ### Mid- to Long-term
+- [ ] Prompt cache
 - [ ] Cache management with VectorDB: Chroma or FAISS?
 - [ ] Custom quantization
 - [ ] KV compression / eviction
 - [ ] Context compression / eviction
-- [ ] PyTorch backend customization (MPS & CUDA) ...
-- [ ] Add graph-based state control over ReAct agent architecture.
 - [ ] Multi-LLM engines
 - [ ] Multi-agents
 - [ ] Scheduling concerns ...
@@ -87,6 +90,9 @@ pip install -r requirements.txt
 4. Open a Pull Request.
 
 ## 📝 Changelog
+### 2025-05-08
+- Enabled streaming output on web interface, using asyncio
+- Also enabled display of thinking process
 ### 2025-04-23
 - Resume development.
 - Add FastAPI-based web interface
