@@ -106,9 +106,9 @@ class MLXEngine():
 		})
 		# Removed self.validation_answer_format logic
 
-	def __call__(self, question:str='', volatile=False):
+	def __call__(self, question:str='', volatile=False, image_paths: Optional[List[str]] = None):
 		# Initial request
-		llm_step_output = self.check_request(question, init=True)
+		llm_step_output = self.check_request(question, init=True, image_paths=image_paths)
 		self.memorize_thought_and_action(llm_step_output.thought, llm_step_output.action)
 
 		while not llm_step_output.is_final:
@@ -184,11 +184,11 @@ class MLXEngine():
 		return final_answer
 
 	@with_final
-	async def stream_call(self, question: str = '', volatile=False):
+	async def stream_call(self, question: str = '', volatile=False, image_paths: Optional[List[str]] = None):
 		'''Async version of __call__() method.'''
 		# Initial request
 		llm_step_output: Optional[LLMStepOutput] = None
-		async for (parsed_output, is_truly_final_token_for_parser) in self.check_request_async(question, init=True):
+		async for (parsed_output, is_truly_final_token_for_parser) in self.check_request_async(question, init=True, image_paths=image_paths):
 			if not is_truly_final_token_for_parser: # this is a thought token from the parser
 				yield ("thought_intermediate", parsed_output) # parsed_output here is actually a token
 			else: # this is the fully parsed LLMStepOutput
@@ -478,63 +478,50 @@ class MLXEngine():
 
 	# Removed __retrieve_answer_dict
 
-	def check_request(self, question: str, init: bool = False) -> LLMStepOutput: # init is not used now
+	def check_request(self, question: str, init: bool = False, image_paths: Optional[List[str]] = None) -> LLMStepOutput:
 		# The role of 'init' was to format the question differently.
 		# This can be handled by the caller or by a more generic prompt structure if needed.
 		# For now, the question is used directly.
+		# If init and image_paths are provided, it's likely the first call with multimodal input.
+		# Subsequent calls in the loop usually won't pass image_paths.
 		llm_input = question
 		
 		# Parser for LLMStepOutput
 		parser = PydanticOutputParser(pydantic_object=LLMStepOutput)
 		
-		# __ask_LLM now returns (raw_string, parsed_object)
-		raw_output, parsed_output = self.__ask_LLM(llm_input, parser=parser)
+		# Pass image_paths to __ask_LLM as image_urls
+		raw_output, parsed_output = self.__ask_LLM(llm_input, parser=parser, image_urls=image_paths)
 		
 		# No direct memorization here, __call__ will handle memorizing thoughts, actions, observations.
-		# self.memorize(llm_input, raw_output) # Old style, remove.
 
 		if not isinstance(parsed_output, LLMStepOutput):
-			# This case should ideally be handled by RetryOutputParser or raise an error in __ask_LLM
-			# For robustness, if parsing somehow returns a non-LLMStepOutput (e.g. due to retry logic not perfectly fitting)
-			# we might need a fallback. However, with PydanticOutputParser, it should be an LLMStepOutput or an exception.
 			raise ValueError(f"Expected LLMStepOutput, got {type(parsed_output)}")
 
 		return parsed_output
 	
-	@with_final # This decorator now gets (token, False) or ( (raw_str, parsed_obj), True )
-	async def check_request_async(self, question: str, init: bool = False) -> AsyncGenerator[Union[str, LLMStepOutput], None]: # init is not used
+	@with_final 
+	async def check_request_async(self, question: str, init: bool = False, image_paths: Optional[List[str]] = None) -> AsyncGenerator[Union[str, LLMStepOutput], None]:
 		llm_input = question
 		parser = PydanticOutputParser(pydantic_object=LLMStepOutput)
 
-		# __ask_LLM_async yields tokens, then (raw_string, parsed_object)
 		raw_str_final = None
 		parsed_obj_final = None
 
-		async for item in self.__ask_LLM_async(llm_input, parser=parser):
+		# Pass image_paths to __ask_LLM_async as image_urls
+		async for item in self.__ask_LLM_async(llm_input, parser=parser, image_urls=image_paths):
 			if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) and isinstance(item[1], LLMStepOutput):
-				# This is the (raw_string, parsed_object) tuple
 				raw_str_final, parsed_obj_final = item
-				# Do not yield here, `with_final` handles the final object.
 			else:
-				# This is an intermediate token
-				yield item # Yield token for streaming
+				yield item 
 		
-		# After the loop, raw_str_final and parsed_obj_final contain the full response.
-		# `with_final` expects the generator's last yield to be the "final complete object".
-		# In our case, the "final complete object" from __ask_LLM_async perspective for parsing is (raw_str, parsed_obj).
-		# `check_request_async` itself should yield the `parsed_obj_final` as its final item for `with_final`.
 		if parsed_obj_final is None:
-			# This would mean __ask_LLM_async didn't yield the final tuple, which is an error.
-			# Or, stream ended prematurely.
-			# Create a fallback error LLMStepOutput
 			parsed_obj_final = LLMStepOutput(
 				thought="Error: LLM response parsing failed or stream ended unexpectedly in check_request_async.",
 				action=Action(action_type=FinalAnswerAction(answer="Error processing request.")),
 				is_final=True
 			)
 		
-		# self.memorize(llm_input, raw_str_final) # Old style, remove. Caller will memorize.
-		yield parsed_obj_final # This is what `with_final` will see as the "complete" item.
+		yield parsed_obj_final
 
 	
 	def use_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Observation:
