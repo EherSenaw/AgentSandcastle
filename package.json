@@ -1,0 +1,26 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "[![Development Status](https://img.shields.io/badge/status-in%20development-yellow.svg)](https://github.com/EherSenaw/AgentSandCastle)",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EherSenaw/AgentSandcastle.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/EherSenaw/AgentSandcastle/issues"
+  },
+  "homepage": "https://github.com/EherSenaw/AgentSandcastle#readme",
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,7 +1,7 @@
 model_args:
-  llm_provider: "mlx"
-  llm_model_name: "mlx-community/EXAONE-3.5-7.8B-Instruct-4bit"
-  llm_modality_io: "text/text"
+  llm_provider: "vllm"
+  llm_model_name: "llava-hf/llava-1.5-7b-hf" # Standard LLaVA model for VLM
+  llm_modality_io: "image,text/text" # Indicate image and text input, text output
   max_new_tokens: 1024
-  manual_answer_format: ""
+  # manual_answer_format: "" # This can be kept or removed, new engines don't use it. Let's keep it for now.
   verbose: true
